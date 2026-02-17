@@ -38,7 +38,8 @@ import {
   DEFAULT_MAP_WIDTH_PX,
   DEFAULT_MAP_HEIGHT_PX,
   MAX_FRAME_TIME_SEC,
-  MOMENT_OF_INERTIA,
+  CAR_HALF_LENGTH,
+  CAR_HALF_WIDTH,
   TACHOMETER_MAX_RPM,
   TACHOMETER_REDLINE_RPM,
   SPEEDOMETER_MAX_KPH,
@@ -242,10 +243,14 @@ function runPhysicsStep(dt) {
   const netTorque  = tireForces.torque;
 
   // 9. Convert to accelerations (F = ma → a = F/m; τ = Iα → α = τ/I).
+  // Moment of inertia computed from the current slider mass so it tracks
+  // the mass slider correctly (the frozen constant uses the default mass only).
   const massKg            = state.params.carMassKg;
+  const momentOfInertia   = massKg * (CAR_HALF_LENGTH * CAR_HALF_LENGTH +
+                                      CAR_HALF_WIDTH  * CAR_HALF_WIDTH) / 3;
   const netLinearAccelX   = netForceX / massKg;
   const netLinearAccelY   = netForceY / massKg;
-  const netAngularAccel   = netTorque  / MOMENT_OF_INERTIA;
+  const netAngularAccel   = netTorque  / momentOfInertia;
 
   // 10. Verlet integration: advance all four wheel positions using the
   //     computed linear and angular accelerations.

@@ -127,8 +127,8 @@ const state = {
     rpm:                  IDLE_RPM,
     currentGear:          'N',
     previousGear:         'N',
-    clutchPedalPosition:  1.0,   // starts released (engaged)
-    clutchEngagement:     1.0,   // derived from pedal position
+    clutchPedalPosition:  0.0,   // starts floored (disengaged) — safe for gear selection
+    clutchEngagement:     0.0,   // derived from pedal position
     isStalled:            false,
     isRunning:            true,
     revMatchTimer:        0,     // countdown for automatic blip on downshift

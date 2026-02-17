@@ -360,14 +360,13 @@ export function updateEngine(dt) {
   const gearRatio = GEAR_RATIOS[engine.currentGear];
 
   // --- Handle stalled engine ---
-  // A stalled engine produces no torque and no RPM increase until restarted.
-  // Recovery: press throttle with clutch partially released (bite zone).
+  // A stalled engine produces no torque until restarted.
+  // Recovery: press clutch fully to floor (disengage), then apply throttle.
+  // This mirrors real life: stall → clutch in → throttle to idle → release.
   if (engine.isStalled) {
     engine.rpm = 0;
-    const clutchPartiallyReleased = engine.clutchPedalPosition > 0.15 &&
-                                    engine.clutchPedalPosition < 0.6;
-    if (throttleAmount > 0.05 && clutchPartiallyReleased) {
-      // Engine restarts when the driver blips the throttle with partial clutch.
+    const clutchFullyDisengaged = engine.clutchEngagement < 0.01;
+    if (throttleAmount > 0.01 && clutchFullyDisengaged) {
       engine.isStalled = false;
       engine.rpm = IDLE_RPM;
     }
@@ -399,17 +398,22 @@ export function updateEngine(dt) {
     const wheelRpm        = (vehicleSpeed * 60) / (TAU * WHEEL_RADIUS_PX);
     const engineRpmFromWheel = wheelRpm * Math.abs(gearRatio) * FINAL_DRIVE_RATIO;
 
-    engine.rpm = engineRpmFromWheel;
+    // The engine fights the load with its idle torque. If wheel-demanded RPM
+    // is below idle, blend toward idle to simulate the engine resisting stall.
+    // The stallResistance slider controls how strongly it fights.
+    const idleHoldRpm = IDLE_RPM * params.stallResistance;
+    engine.rpm = Math.max(engineRpmFromWheel, idleHoldRpm);
 
     // Hard redline limiter: if RPM would exceed redline, the engine cuts fuel.
     if (engine.rpm > REDLINE_RPM) {
       engine.rpm = REDLINE_RPM;
     }
 
-    // Stall check: if the wheel is nearly stopped and would drag RPM below stall,
-    // the engine stalls. stallResistance adjusts how hard the engine fights it.
+    // Stall check: if wheel speed is dragging RPM well below stall threshold
+    // despite the engine fighting back, stall occurs.
+    // Only stall if the car is still barely moving AND throttle is not applied.
     const effectiveStallRpm = STALL_RPM * (1.0 - params.stallResistance * 0.8);
-    if (engineRpmFromWheel < effectiveStallRpm && vehicleSpeed < 5) {
+    if (engineRpmFromWheel < effectiveStallRpm && vehicleSpeed < 5 && throttleAmount < 0.05) {
       engine.isStalled = true;
       engine.rpm = 0;
       return;
@@ -586,24 +590,19 @@ export function computeTireForces() {
     // Sign: opposes lateral drift direction.
     const lateralForceSign = wheelLateralSpeed > 0 ? -1 : 1;
 
-    // Longitudinal force (along wheel heading): engine drive + tyre traction.
+    // Longitudinal force (along wheel heading): engine drive, traction-limited.
+    // driveForce is already in Newtons from the torque chain (engine torque →
+    // gear ratio → final drive → wheel radius). We split it equally across the
+    // two rear wheels and clamp to the tyre's grip limit directly.
     let longitudinalForceMag = 0;
     if (isRear) {
-      // Drive force from engine, subject to traction limit.
-      // Slip ratio approximation: how much wheel speed differs from vehicle speed.
-      const wheelSpeedDemand    = driveForce > 0
-        ? longitudinalSpeed + driveForce * dt  // where the engine wants the wheel
-        : longitudinalSpeed;
-      const slipRatio = speedMagnitude > 0.5
-        ? (wheelSpeedDemand - longitudinalSpeed) / speedMagnitude
-        : 0;
-      const clampedSlip = clamp(slipRatio, -1, 1);
-      longitudinalForceMag = pacejkaForce(normalLoad, frictionCoeff,
-                                           Math.abs(clampedSlip), TIRE_PEAK_SLIP_RATIO);
-      longitudinalForceMag *= Math.sign(driveForce + 0.0001); // preserve sign
+      // Half the total drive force per rear wheel.
+      const perWheelDrive = driveForce * 0.5;
+      // Traction limit: the tyre cannot push harder than its grip allows.
+      const tractionLimit = normalLoad * frictionCoeff;
+      longitudinalForceMag = clamp(perWheelDrive, -tractionLimit, tractionLimit);
     }
-    // Front wheels: no drive force (FWD not implemented), but do roll resistance
-    // at the tyre level. Drag is handled globally in computeDragForces.
+    // Front wheels: no drive force (FWD not implemented); drag handled globally.
 
     // Friction ellipse: combined lateral and longitudinal force cannot exceed
     // the tyre's grip circle (normalLoad × frictionCoeff).
