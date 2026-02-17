@@ -103,15 +103,15 @@
         </div>
         <div class="slider-row">
           <span class="slider-label">Roll Resist.</span>
-          <!-- Rolling resistance coefficient; typical 0.010–0.020 for road tyres -->
-          <input type="range" id="rollingResistanceCoeff" min="0.0001" max="0.01" value="0.001" step="0.0001">
-          <span class="slider-value" id="rollingResistanceCoeffValue">0.00100</span>
+          <!-- Rolling resistance coefficient (SI): F = coeff × mass × g; typical 0.010–0.020 -->
+          <input type="range" id="rollingResistanceCoeff" min="0.001" max="0.03" value="0.012" step="0.001">
+          <span class="slider-value" id="rollingResistanceCoeffValue">0.012</span>
         </div>
         <div class="slider-row">
           <span class="slider-label">Aero Drag</span>
-          <!-- Aero drag coefficient (force = k × speed²); small numbers intentional -->
-          <input type="range" id="aeroDragCoeff" min="0.00001" max="0.002" value="0.00015" step="0.00001">
-          <span class="slider-value" id="aeroDragCoeffValue">0.00015</span>
+          <!-- Aero drag coefficient (N·s²/m²): F = k × speed²; 0.5×ρ×Cd×A ≈ 0.4 -->
+          <input type="range" id="aeroDragCoeff" min="0.1" max="1.0" value="0.4" step="0.01">
+          <span class="slider-value" id="aeroDragCoeffValue">0.40</span>
         </div>
         <div class="slider-row">
           <span class="slider-label">Tire Friction</span>
@@ -119,10 +119,10 @@
           <span class="slider-value" id="tireFrictionCoeffValue">1.00</span>
         </div>
         <div class="slider-row">
-          <span class="slider-label">CoG Height (px)</span>
-          <!-- Higher = more weight transfer under accel/cornering -->
-          <input type="range" id="cogHeightPx" min="1" max="20" value="5" step="0.5">
-          <span class="slider-value" id="cogHeightPxValue">5.0</span>
+          <span class="slider-label">CoG Height (m)</span>
+          <!-- Height of centre of gravity in metres; higher = more weight transfer -->
+          <input type="range" id="cogHeight" min="0.1" max="2.0" value="0.5" step="0.05">
+          <span class="slider-value" id="cogHeightValue">0.50</span>
         </div>
         <div class="slider-row">
           <span class="slider-label">Bounciness</span>
@@ -223,9 +223,10 @@
           <span class="slider-value" id="motionBlurIntensityValue">0.60</span>
         </div>
         <div class="slider-row">
-          <span class="slider-label">Threshold (px/s)</span>
-          <input type="range" id="motionBlurThreshold" min="10" max="500" value="100" step="10">
-          <span class="slider-value" id="motionBlurThresholdValue">100</span>
+          <span class="slider-label">Threshold (m/s)</span>
+          <!-- Speed above which blur activates; 10 m/s ≈ 36 km/h -->
+          <input type="range" id="motionBlurThreshold" min="1" max="50" value="10" step="1">
+          <span class="slider-value" id="motionBlurThresholdValue">10</span>
         </div>
       </div>
 
@@ -233,14 +234,14 @@
       <div class="panel-section">
         <h3>🗺️ Map Size</h3>
         <div class="slider-row">
-          <span class="slider-label">Width (px)</span>
-          <input type="range" id="mapWidth" min="800" max="10000" value="3000" step="100">
-          <span class="slider-value" id="mapWidthValue">3000</span>
+          <span class="slider-label">Width (m)</span>
+          <input type="range" id="mapWidth" min="100" max="1000" value="300" step="10">
+          <span class="slider-value" id="mapWidthValue">300</span>
         </div>
         <div class="slider-row">
-          <span class="slider-label">Height (px)</span>
-          <input type="range" id="mapHeight" min="800" max="10000" value="2400" step="100">
-          <span class="slider-value" id="mapHeightValue">2400</span>
+          <span class="slider-label">Height (m)</span>
+          <input type="range" id="mapHeight" min="100" max="1000" value="240" step="10">
+          <span class="slider-value" id="mapHeightValue">240</span>
         </div>
       </div>
 
@@ -252,6 +253,151 @@
           <!-- Slider 60–160 → scale 0.6×–1.6× in ui.js -->
           <input type="range" id="gaugeLabelScale" min="60" max="160" value="100" step="5">
           <span class="slider-value" id="gaugeLabelScaleValue">1.0×</span>
+        </div>
+      </div>
+
+      <!-- Engine & Drivetrain Panel -->
+      <div class="panel-section">
+        <h3>🔧 Engine &amp; Drivetrain</h3>
+        <div class="slider-row">
+          <span class="slider-label">Peak Torque (Nm)</span>
+          <input type="range" id="peakEngineTorqueNm" min="100" max="5000" value="2800" step="50">
+          <span class="slider-value" id="peakEngineTorqueNmValue">2800</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Idle RPM</span>
+          <input type="range" id="idleRpm" min="400" max="1500" value="800" step="50">
+          <span class="slider-value" id="idleRpmValue">800</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Redline RPM</span>
+          <input type="range" id="redlineRpm" min="4000" max="10000" value="7000" step="100">
+          <span class="slider-value" id="redlineRpmValue">7000</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Stall RPM</span>
+          <input type="range" id="stallRpm" min="100" max="1000" value="600" step="50">
+          <span class="slider-value" id="stallRpmValue">600</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Wheel Radius (m)</span>
+          <input type="range" id="wheelRadius" min="0.2" max="0.6" value="0.35" step="0.01">
+          <span class="slider-value" id="wheelRadiusValue">0.35</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Final Drive</span>
+          <input type="range" id="finalDriveRatio" min="1.0" max="8.0" value="4.1" step="0.1">
+          <span class="slider-value" id="finalDriveRatioValue">4.1</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Brake Force (N)</span>
+          <input type="range" id="brakeForce" min="500" max="20000" value="9810" step="100">
+          <span class="slider-value" id="brakeForceValue">9810</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Idle Creep (N)</span>
+          <input type="range" id="idleCreepForce" min="0" max="500" value="200" step="10">
+          <span class="slider-value" id="idleCreepForceValue">200</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Gear 1</span>
+          <input type="range" id="gearRatio1" min="0.5" max="6.0" value="3.5" step="0.05">
+          <span class="slider-value" id="gearRatio1Value">3.50</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Gear 2</span>
+          <input type="range" id="gearRatio2" min="0.5" max="5.0" value="2.1" step="0.05">
+          <span class="slider-value" id="gearRatio2Value">2.10</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Gear 3</span>
+          <input type="range" id="gearRatio3" min="0.3" max="3.0" value="1.4" step="0.05">
+          <span class="slider-value" id="gearRatio3Value">1.40</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Gear 4</span>
+          <input type="range" id="gearRatio4" min="0.2" max="2.0" value="1.0" step="0.05">
+          <span class="slider-value" id="gearRatio4Value">1.00</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Gear 5</span>
+          <input type="range" id="gearRatio5" min="0.1" max="1.5" value="0.75" step="0.05">
+          <span class="slider-value" id="gearRatio5Value">0.75</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Gear 6</span>
+          <input type="range" id="gearRatio6" min="0.1" max="1.2" value="0.58" step="0.05">
+          <span class="slider-value" id="gearRatio6Value">0.58</span>
+        </div>
+      </div>
+
+      <!-- Tire Model Panel -->
+      <div class="panel-section">
+        <h3>🏎️ Tire Model (Pacejka)</h3>
+        <div class="slider-row">
+          <span class="slider-label">Pacejka B</span>
+          <!-- Stiffness factor: higher = sharper grip peak, more sudden breakaway -->
+          <input type="range" id="pacejkaB" min="1" max="30" value="10" step="0.5">
+          <span class="slider-value" id="pacejkaBValue">10.0</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Pacejka C</span>
+          <!-- Shape factor: controls how wide the force curve is -->
+          <input type="range" id="pacejkaC" min="0.5" max="3.0" value="1.9" step="0.05">
+          <span class="slider-value" id="pacejkaCValue">1.90</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Peak Slip Angle (°)</span>
+          <!-- Slip angle at peak lateral force; typical 6–10° -->
+          <input type="range" id="peakSlipAngleDeg" min="2" max="20" value="8" step="0.5">
+          <span class="slider-value" id="peakSlipAngleDegValue">8.0</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Peak Slip Ratio</span>
+          <!-- Longitudinal slip ratio at peak traction; typical 0.1–0.15 -->
+          <input type="range" id="peakSlipRatio" min="0.05" max="0.30" value="0.12" step="0.01">
+          <span class="slider-value" id="peakSlipRatioValue">0.12</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Max Steer Angle (rad)</span>
+          <!-- Maximum physical tyre lock angle; 0.52 rad ≈ 30° -->
+          <input type="range" id="maxFrontWheelAngle" min="0.1" max="1.0" value="0.52" step="0.01">
+          <span class="slider-value" id="maxFrontWheelAngleValue">0.52</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Steer Drag Range (px)</span>
+          <!-- Mouse drag pixels for full lock; larger = lighter steering -->
+          <input type="range" id="steeringDragRange" min="50" max="400" value="150" step="10">
+          <span class="slider-value" id="steeringDragRangeValue">150</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Self-Center Rate</span>
+          <!-- Rate at which steering wheel returns to centre when released -->
+          <input type="range" id="steeringSelfCenterRate" min="0" max="20" value="5.0" step="0.5">
+          <span class="slider-value" id="steeringSelfCenterRateValue">5.0</span>
+        </div>
+      </div>
+
+      <!-- World & Visual Panel -->
+      <div class="panel-section">
+        <h3>🌍 World &amp; Visual</h3>
+        <div class="slider-row">
+          <span class="slider-label">Constraint Iters</span>
+          <!-- Jakobsen solver passes per step; more = stiffer body, slower -->
+          <input type="range" id="constraintIterations" min="1" max="12" value="6" step="1">
+          <span class="slider-value" id="constraintIterationsValue">6</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Checker Tile (px)</span>
+          <!-- Visual size of each checkerboard square in screen pixels at zoom=1 -->
+          <input type="range" id="checkerboardTileSize" min="20" max="200" value="80" step="5">
+          <span class="slider-value" id="checkerboardTileSizeValue">80</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">Max Trail Arrows</span>
+          <!-- Hard cap on total alive arrows; higher = more history, more CPU -->
+          <input type="range" id="maxTrailArrows" min="50" max="1200" value="600" step="50">
+          <span class="slider-value" id="maxTrailArrowsValue">600</span>
         </div>
       </div>
 

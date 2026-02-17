@@ -35,40 +35,38 @@ import {
   CONSTRAINT_AXLE_WIDTH,
   CONSTRAINT_SIDE_LENGTH,
   CONSTRAINT_DIAGONAL,
-  CONSTRAINT_ITERATIONS,
-  CAR_MASS_KG,
-  GRAVITY_PX_PER_SEC2,
-  COG_HEIGHT_PX,
-  MOMENT_OF_INERTIA,
+  GRAVITY,
   MAX_DISPLACEMENT_PER_STEP,
-  IDLE_RPM,
-  REDLINE_RPM,
   TORQUE_PEAK_RPM,
-  STALL_RPM,
-  PEAK_ENGINE_TORQUE_NM,
-  BRAKE_FORCE,
-  IDLE_CREEP_FORCE,
   GEAR_RATIOS,
-  FINAL_DRIVE_RATIO,
-  WHEEL_RADIUS_PX,
   CLUTCH_BITE_POINT,
   CLUTCH_BITE_RANGE,
   CLUTCH_BITE_CURVE,
   CLUTCH_ENGAGE_TIME,
-  PACEJKA_B,
-  PACEJKA_C,
-  TIRE_PEAK_SLIP_ANGLE_DEG,
   TIRE_PEAK_SLIP_RATIO,
-  MAX_FRONT_WHEEL_ANGLE_RAD,
-  STEERING_DRAG_RANGE_PX,
-  STEERING_SELF_CENTER_RATE,
   CAMERA_MIN_ZOOM,
   CAMERA_MAX_ZOOM,
   CAMERA_ZOOM_SPEED_THRESHOLD_KPH,
-  KPH_TO_PX_PER_SEC,
+  KPH_TO_MPS,
   TAU,
   DEG_TO_RAD,
 } from './constants.js';
+
+// Returns the effective gear ratio for the current gear, reading from
+// state.params so slider changes take effect at runtime.
+function getGearRatio(gear, params) {
+  if (gear === 'N') return 0;
+  if (gear === 'R') return -(params.gearRatio1 ?? 3.5); // reverse ≈ −1st ratio
+  const map = {
+    '1': params.gearRatio1,
+    '2': params.gearRatio2,
+    '3': params.gearRatio3,
+    '4': params.gearRatio4,
+    '5': params.gearRatio5,
+    '6': params.gearRatio6,
+  };
+  return map[gear] ?? GEAR_RATIOS[gear] ?? 0;
+}
 
 
 // =============================================================
@@ -224,8 +222,8 @@ export function computeWeightTransfer() {
   const params    = state.params;
 
   const massKg       = params.carMassKg;
-  const gravity      = GRAVITY_PX_PER_SEC2;
-  const cogHeight    = params.cogHeightPx;
+  const gravity      = GRAVITY;
+  const cogHeight    = params.cogHeight;
   const wheelbase    = CAR_HALF_LENGTH * 2;  // FL↔RL distance
   const trackWidth   = CAR_HALF_WIDTH  * 2;  // FL↔FR distance
 
@@ -267,10 +265,10 @@ export function computeWeightTransfer() {
 // The falloff is intentionally gentle — the engine is still producing ~30%
 // torque at idle and ~45% at redline, which keeps the car driveable in all gears.
 // A sharper curve would reward staying near the torque peak more aggressively.
-function torqueCurveNormalized(rpm) {
+function torqueCurveNormalized(rpm, idleRpm, redlineRpm) {
   // Normalise position of rpm within the operating range.
-  const rpmRange           = REDLINE_RPM - IDLE_RPM;
-  const distanceFromPeak   = (rpm - TORQUE_PEAK_RPM) / rpmRange;
+  const rpmRange         = redlineRpm - idleRpm;
+  const distanceFromPeak = (rpm - TORQUE_PEAK_RPM) / rpmRange;
   // Parabola: 1 at peak, falling off with the square of distance from peak.
   // The coefficient 2.5 controls how steeply the curve falls away from the peak.
   return Math.max(0, 1.0 - 2.5 * distanceFromPeak * distanceFromPeak);
@@ -357,7 +355,7 @@ export function updateEngine(dt) {
     params.clutchBiteCurve,
   );
 
-  const gearRatio = GEAR_RATIOS[engine.currentGear];
+  const gearRatio = getGearRatio(engine.currentGear, params);
 
   // --- Handle stalled engine ---
   // A stalled engine produces no torque until restarted.
@@ -368,7 +366,7 @@ export function updateEngine(dt) {
     const clutchFullyDisengaged = engine.clutchEngagement < 0.01;
     if (throttleAmount > 0.01 && clutchFullyDisengaged) {
       engine.isStalled = false;
-      engine.rpm = IDLE_RPM;
+      engine.rpm = params.idleRpm;
     }
     return;
   }
@@ -382,38 +380,36 @@ export function updateEngine(dt) {
     engine.rpm += (engine.revMatchTargetRpm - engine.rpm) * blendRate * dt;
   }
 
+  // Read live slider values for RPM limits and drivetrain
+  const idleRpm    = params.idleRpm;
+  const redlineRpm = params.redlineRpm;
+  const stallRpm   = params.stallRpm;
+  const wheelRad   = params.wheelRadius;
+  const finalDrive = params.finalDriveRatio;
+
   // --- RPM computation: three cases based on clutch zone ---
   if (gearRatio === 0 || engine.clutchEngagement < 0.01) {
     // CASE A: Neutral OR clutch fully disengaged → free-revving engine.
-    // RPM follows throttle input with a realistic lag (rise faster than fall).
-    const freeRevTarget = IDLE_RPM + throttleAmount * (REDLINE_RPM - IDLE_RPM);
-    const riseRate = throttleAmount > 0.01 ? 6.0 : 3.0; // normalised fraction per second
+    const freeRevTarget = idleRpm + throttleAmount * (redlineRpm - idleRpm);
+    const riseRate = throttleAmount > 0.01 ? 6.0 : 3.0;
     engine.rpm += (freeRevTarget - engine.rpm) * riseRate * dt;
-    engine.rpm  = clamp(engine.rpm, IDLE_RPM, REDLINE_RPM);
+    engine.rpm  = clamp(engine.rpm, idleRpm, redlineRpm);
 
   } else if (engine.clutchEngagement > 0.99) {
     // CASE B: Clutch fully engaged → rigid mechanical coupling.
-    // RPM is computed from wheel speed — the drivetrain forces them to agree.
-    const vehicleSpeed    = body.speed;
-    const wheelRpm        = (vehicleSpeed * 60) / (TAU * WHEEL_RADIUS_PX);
-    const engineRpmFromWheel = wheelRpm * Math.abs(gearRatio) * FINAL_DRIVE_RATIO;
+    const vehicleSpeed       = body.speed;
+    const wheelRpm           = (vehicleSpeed * 60) / (TAU * wheelRad);
+    const engineRpmFromWheel = wheelRpm * Math.abs(gearRatio) * finalDrive;
 
-    // The engine fights the load with its idle torque. If wheel-demanded RPM
-    // is below idle, blend toward idle to simulate the engine resisting stall.
-    // The stallResistance slider controls how strongly it fights.
-    const idleHoldRpm = IDLE_RPM * params.stallResistance;
+    const idleHoldRpm = idleRpm * params.stallResistance;
     engine.rpm = Math.max(engineRpmFromWheel, idleHoldRpm);
 
-    // Hard redline limiter: if RPM would exceed redline, the engine cuts fuel.
-    if (engine.rpm > REDLINE_RPM) {
-      engine.rpm = REDLINE_RPM;
+    if (engine.rpm > redlineRpm) {
+      engine.rpm = redlineRpm;
     }
 
-    // Stall check: if wheel speed is dragging RPM well below stall threshold
-    // despite the engine fighting back, stall occurs.
-    // Only stall if the car is still barely moving AND throttle is not applied.
-    const effectiveStallRpm = STALL_RPM * (1.0 - params.stallResistance * 0.8);
-    if (engineRpmFromWheel < effectiveStallRpm && vehicleSpeed < 5 && throttleAmount < 0.05) {
+    const effectiveStallRpm = stallRpm * (1.0 - params.stallResistance * 0.8);
+    if (engineRpmFromWheel < effectiveStallRpm && vehicleSpeed < 0.5 && throttleAmount < 0.05) {
       engine.isStalled = true;
       engine.rpm = 0;
       return;
@@ -421,32 +417,23 @@ export function updateEngine(dt) {
 
   } else {
     // CASE C: Clutch in slip/bite zone → blend free-rev with wheel demand.
-    // This is what makes the clutch feel real: in the slip zone the engine is
-    // partially loaded. Too much mismatch between free RPM and wheel demand
-    // causes either stalling (if wheel drags RPM down past stall) or wheelspin
-    // (if engine is revved high and dumps torque into a stationary wheel).
-    const vehicleSpeed       = body.speed;
-    const wheelRpm           = (vehicleSpeed * 60) / (TAU * WHEEL_RADIUS_PX);
-    const wheelDemandedRpm   = wheelRpm * Math.abs(gearRatio) * FINAL_DRIVE_RATIO;
+    const vehicleSpeed     = body.speed;
+    const wheelRpm         = (vehicleSpeed * 60) / (TAU * wheelRad);
+    const wheelDemandedRpm = wheelRpm * Math.abs(gearRatio) * finalDrive;
 
-    // Where would the engine be if running freely?
-    const freeRevTarget = IDLE_RPM + throttleAmount * (REDLINE_RPM - IDLE_RPM);
+    const freeRevTarget = idleRpm + throttleAmount * (redlineRpm - idleRpm);
     const riseRate      = throttleAmount > 0.01 ? 6.0 : 3.0;
     const freeRpm       = engine.rpm + (freeRevTarget - engine.rpm) * riseRate * dt;
 
-    // Blend: at full engagement the engine is forced to wheel speed;
-    // at zero engagement it free-revs.
     engine.rpm = freeRpm * (1 - engine.clutchEngagement) +
                  wheelDemandedRpm * engine.clutchEngagement;
 
-    engine.rpm = clamp(engine.rpm, 0, REDLINE_RPM);
+    engine.rpm = clamp(engine.rpm, 0, redlineRpm);
 
-    // Stall check during engagement: if the clutch is substantially engaged
-    // and RPM is dropping below stall while barely moving, the engine stalls.
-    const stallThreshold = STALL_RPM * (1.0 - params.stallResistance * 0.6);
+    const stallThreshold = stallRpm * (1.0 - params.stallResistance * 0.6);
     if (engine.rpm < stallThreshold &&
         engine.clutchEngagement > 0.4 &&
-        vehicleSpeed < 5) {
+        vehicleSpeed < 0.5) {
       engine.isStalled = true;
       engine.rpm = 0;
     }
@@ -468,11 +455,11 @@ export function updateEngine(dt) {
 // Beyond the peak, grip falls off — this is what makes drifting possible.
 // The peak prevents infinite lateral force, which is what would happen with
 // a linear friction model.
-function pacejkaForce(normalLoad, frictionCoeff, slipValue, peakSlipValue) {
+function pacejkaForce(normalLoad, frictionCoeff, slipValue, peakSlipValue, B, C) {
   if (peakSlipValue < 0.0001) return 0;
   const normalisedSlip = slipValue / peakSlipValue;
   return normalLoad * frictionCoeff *
-         Math.sin(PACEJKA_C * Math.atan(PACEJKA_B * normalisedSlip));
+         Math.sin(C * Math.atan(B * normalisedSlip));
 }
 
 
@@ -492,7 +479,7 @@ export function computeTireForces() {
   const heading         = body.heading;
   const angularVelocity = body.angularVelocity;
   const frictionCoeff   = params.tireFrictionCoeff;
-  const gearRatio       = GEAR_RATIOS[engine.currentGear];
+  const gearRatio       = getGearRatio(engine.currentGear, params);
 
   // Car forward unit vector (in canvas coords: +Y is down, +X is right).
   const forwardX = Math.sin(heading);
@@ -503,13 +490,13 @@ export function computeTireForces() {
 
   // Longitudinal speed along the car's forward axis.
   const longitudinalSpeed = dot(body.velocityX, body.velocityY, forwardX, forwardY);
-  const speedMagnitude    = Math.max(0.5, body.speed); // avoid division by zero
+  const speedMagnitude    = Math.max(0.05, body.speed); // avoid division by zero (m/s)
 
   // Compute available drive force from engine torque.
   // Only transmitted to rear wheels (rear-wheel-drive assumption).
   let driveForce = 0;
   if (gearRatio !== 0 && engine.clutchEngagement > 0 && !engine.isStalled) {
-    const torqueNormalized = torqueCurveNormalized(engine.rpm);
+    const torqueNormalized = torqueCurveNormalized(engine.rpm, params.idleRpm, params.redlineRpm);
     let throttleAmount = 0;
     if (state.input.mouseThrottleActive) {
       throttleAmount = state.input.mouseThrottleAmount;
@@ -517,18 +504,19 @@ export function computeTireForces() {
       throttleAmount = 1.0;
     }
 
-    const engineTorque  = PEAK_ENGINE_TORQUE_NM * torqueNormalized * throttleAmount;
-    const wheelTorque   = engineTorque * Math.abs(gearRatio) * FINAL_DRIVE_RATIO
-                          * engine.clutchEngagement;
-    driveForce = wheelTorque / WHEEL_RADIUS_PX;
+    const engineTorque = params.peakEngineTorqueNm * torqueNormalized * throttleAmount;
+    const wheelTorque  = engineTorque * Math.abs(gearRatio) * params.finalDriveRatio
+                         * engine.clutchEngagement;
+    driveForce = wheelTorque / params.wheelRadius;
 
     // Reverse: flip the direction.
     if (gearRatio < 0) driveForce = -driveForce;
 
     // Idle creep: small force at idle in a low gear even without throttle.
+    // 3 m/s ≈ 10 km/h — only creep at very low speed
     if (throttleAmount < 0.05 && Math.abs(gearRatio) >= 1.0 &&
-        engine.clutchEngagement > 0.9 && Math.abs(longitudinalSpeed) < 30) {
-      driveForce += IDLE_CREEP_FORCE * engine.clutchEngagement;
+        engine.clutchEngagement > 0.9 && Math.abs(longitudinalSpeed) < 3) {
+      driveForce += params.idleCreepForce * engine.clutchEngagement;
     }
   }
 
@@ -540,7 +528,7 @@ export function computeTireForces() {
     rearRight:  state.wheels.rearRight,
   };
 
-  const peakSlipAngleRad = TIRE_PEAK_SLIP_ANGLE_DEG * DEG_TO_RAD;
+  const peakSlipAngleRad = params.peakSlipAngleDeg * DEG_TO_RAD;
 
   let netForceX = 0;
   let netForceY = 0;
@@ -579,14 +567,15 @@ export function computeTireForces() {
 
     // Slip angle: angle between where the wheel is pointed and where it is going.
     // At zero speed there is no meaningful slip angle; suppress below a threshold.
-    const slipAngle = Math.abs(speedMagnitude) > 1.0
+    const slipAngle = Math.abs(speedMagnitude) > 0.1
       ? Math.atan2(wheelLateralSpeed, Math.abs(wheelLongitudinalSpeed))
       : 0;
 
     // Lateral force (perpendicular to wheel heading): Pacejka.
     // Opposes the lateral velocity — this is what steers the car.
     const lateralForceMag = pacejkaForce(normalLoad, frictionCoeff,
-                                          Math.abs(slipAngle), peakSlipAngleRad);
+                                          Math.abs(slipAngle), peakSlipAngleRad,
+                                          params.pacejkaB, params.pacejkaC);
     // Sign: opposes lateral drift direction.
     const lateralForceSign = wheelLateralSpeed > 0 ? -1 : 1;
 
@@ -648,11 +637,11 @@ export function computeDragForces() {
   const body   = state.body;
   const params = state.params;
 
-  if (body.speed < 0.5) {
+  if (body.speed < 0.05) {
     return { forceX: 0, forceY: 0 };
   }
 
-  const normalForce         = params.carMassKg * GRAVITY_PX_PER_SEC2;
+  const normalForce         = params.carMassKg * GRAVITY;
   const rollingResistance   = params.rollingResistanceCoeff * normalForce;
   const aeroDrag            = params.aeroDragCoeff * body.speed * body.speed;
   const totalDragMagnitude  = rollingResistance + aeroDrag;
@@ -678,18 +667,19 @@ export function computeDragForces() {
 //
 // Returns: { forceX, forceY }
 export function computeBrakeForce() {
-  const body  = state.body;
-  const input = state.input;
+  const body   = state.body;
+  const input  = state.input;
+  const params = state.params;
 
-  if (!input.brakeKeyHeld || body.speed < 0.5) {
+  if (!input.brakeKeyHeld || body.speed < 0.05) {
     return { forceX: 0, forceY: 0 };
   }
 
   const invSpeed = 1 / body.speed;
 
   return {
-    forceX: -body.velocityX * invSpeed * BRAKE_FORCE,
-    forceY: -body.velocityY * invSpeed * BRAKE_FORCE,
+    forceX: -body.velocityX * invSpeed * params.brakeForce,
+    forceY: -body.velocityY * invSpeed * params.brakeForce,
   };
 }
 
@@ -769,9 +759,10 @@ function enforceDistanceConstraint(particleA, particleB, restDistance) {
 // two diagonals. The diagonals prevent the rectangle from shearing into a
 // parallelogram, which would happen with only four side constraints.
 export function solveRigidBodyConstraints() {
-  const wh = state.wheels;
+  const wh     = state.wheels;
+  const iters  = state.params.constraintIterations;
 
-  for (let iteration = 0; iteration < CONSTRAINT_ITERATIONS; iteration++) {
+  for (let iteration = 0; iteration < iters; iteration++) {
     // Four edges: front axle, rear axle, left side, right side.
     enforceDistanceConstraint(wh.frontLeft,  wh.frontRight, CONSTRAINT_AXLE_WIDTH);
     enforceDistanceConstraint(wh.rearLeft,   wh.rearRight,  CONSTRAINT_AXLE_WIDTH);
@@ -871,10 +862,11 @@ export function clampParticleDisplacements() {
 // Self-centres when the mouse is not dragging.
 export function updateSteering(dt) {
   const steering = state.steering;
+  const params   = state.params;
 
   // Self-centring: when not dragging, steer back to zero.
   if (!steering.isDragging) {
-    const returnAmount = STEERING_SELF_CENTER_RATE * dt;
+    const returnAmount = params.steeringSelfCenterRate * dt;
     if (Math.abs(steering.wheelAngle) < returnAmount) {
       steering.wheelAngle = 0;
     } else {
@@ -883,13 +875,13 @@ export function updateSteering(dt) {
   }
 
   // Map visual wheel angle to physical tyre lock angle.
-  // The visual range (±STEERING_DRAG_RANGE_PX mapped to ±large angle) is
+  // The visual range (±steeringDragRange mapped to ±large angle) is
   // compressed to the physical maximum steering lock.
   const normalisedSteering  = clamp(
-    steering.wheelAngle / (STEERING_DRAG_RANGE_PX * 3),  // compress to [-1, 1]
+    steering.wheelAngle / (params.steeringDragRange * 3),  // compress to [-1, 1]
     -1, 1
   );
-  steering.frontWheelAngle  = normalisedSteering * MAX_FRONT_WHEEL_ANGLE_RAD;
+  steering.frontWheelAngle  = normalisedSteering * params.maxFrontWheelAngle;
 }
 
 
@@ -927,7 +919,7 @@ export function updateCamera(dt) {
   cam.y     = newCamY;
 
   // Zoom out as speed increases.
-  const speedKph = body.speed / KPH_TO_PX_PER_SEC;
+  const speedKph = body.speed / KPH_TO_MPS;
   const speedAboveThreshold = Math.max(0, speedKph - CAMERA_ZOOM_SPEED_THRESHOLD_KPH);
   cam.targetZoom = Math.max(
     CAMERA_MIN_ZOOM,
@@ -949,20 +941,21 @@ export function updateCamera(dt) {
 // On any shift, clutch engagement is unaffected — the driver still
 // controls the clutch pedal independently.
 export function handleGearChange(newGear) {
-  const engine    = state.engine;
-  const body      = state.body;
+  const engine = state.engine;
+  const body   = state.body;
+  const params = state.params;
 
-  const previousRatio = GEAR_RATIOS[engine.currentGear];
-  const newRatio      = GEAR_RATIOS[newGear];
+  const previousRatio = getGearRatio(engine.currentGear, params);
+  const newRatio      = getGearRatio(newGear, params);
 
   // Rev-match blip for downshifts: if the new gear would demand a higher RPM
   // than the engine currently has, blip the throttle to close the gap.
   if (newRatio !== 0 && previousRatio !== 0 && newRatio > previousRatio) {
-    const vehicleSpeed       = body.speed;
-    const wheelRpm           = (vehicleSpeed * 60) / (TAU * WHEEL_RADIUS_PX);
-    const targetRpm          = wheelRpm * Math.abs(newRatio) * FINAL_DRIVE_RATIO;
+    const vehicleSpeed = body.speed;
+    const wheelRpm     = (vehicleSpeed * 60) / (TAU * params.wheelRadius);
+    const targetRpm    = wheelRpm * Math.abs(newRatio) * params.finalDriveRatio;
     if (targetRpm > engine.rpm) {
-      engine.revMatchTargetRpm = Math.min(targetRpm, REDLINE_RPM);
+      engine.revMatchTargetRpm = Math.min(targetRpm, params.redlineRpm);
       engine.revMatchTimer     = 0.2; // blip lasts 200 ms
     }
   }

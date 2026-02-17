@@ -9,17 +9,36 @@
 
 import {
   IDLE_RPM,
+  REDLINE_RPM,
+  STALL_RPM,
+  PEAK_ENGINE_TORQUE_NM,
   DEFAULT_BOUNCINESS,
   DEFAULT_STALL_RESISTANCE,
   DEFAULT_TIRE_FRICTION_COEFF,
   DEFAULT_ROLLING_RESISTANCE_COEFF,
   DEFAULT_AERO_DRAG_COEFF,
-  DEFAULT_MAP_WIDTH_PX,
-  DEFAULT_MAP_HEIGHT_PX,
+  DEFAULT_MAP_WIDTH,
+  DEFAULT_MAP_HEIGHT,
+  COG_HEIGHT,
   CAMERA_SPRING_STIFFNESS,
   CAMERA_DAMPING_FACTOR,
   DEFAULT_SIM_FPS,
   CAR_MASS_KG,
+  WHEEL_RADIUS,
+  FINAL_DRIVE_RATIO,
+  BRAKE_FORCE,
+  IDLE_CREEP_FORCE,
+  PACEJKA_B,
+  PACEJKA_C,
+  TIRE_PEAK_SLIP_ANGLE_DEG,
+  TIRE_PEAK_SLIP_RATIO,
+  MAX_FRONT_WHEEL_ANGLE_RAD,
+  STEERING_DRAG_RANGE_PX,
+  STEERING_SELF_CENTER_RATE,
+  CONSTRAINT_ITERATIONS,
+  CHECKERBOARD_TILE_SIZE_PX,
+  MAX_TRAIL_ARROWS,
+  GEAR_RATIOS,
 } from './constants.js';
 
 // =============================================================
@@ -59,24 +78,24 @@ const state = {
     centerY: 0,           // average of all four wheel Y positions
     heading: 0,           // radians; 0 = facing up (+Y), increases clockwise
                           // derived: atan2(frontMid - rearMid) + PI/2
-    velocityX: 0,         // px/s, X component of centre-of-mass velocity
-    velocityY: 0,         // px/s, Y component
-    speed: 0,             // px/s, magnitude of (velocityX, velocityY)
+    velocityX: 0,         // m/s, X component of centre-of-mass velocity
+    velocityY: 0,         // m/s, Y component
+    speed: 0,             // m/s, magnitude of (velocityX, velocityY)
     angularVelocity: 0,   // rad/s, rate of heading change
     prevHeading: 0,       // heading from the previous step (to derive angularVelocity)
     prevVelocityX: 0,     // velocity from the previous step (to derive acceleration)
     prevVelocityY: 0,
-    longitudinalAccel: 0, // px/s², acceleration along the car's forward axis
+    longitudinalAccel: 0, // m/s², acceleration along the car's forward axis
                           // positive = accelerating forward, negative = braking
-    lateralAccel: 0,      // px/s², acceleration perpendicular to forward axis
+    lateralAccel: 0,      // m/s², acceleration perpendicular to forward axis
                           // positive = rightward, negative = leftward
   },
 
   // -----------------------------------------------------------
-  // WHEEL LOADS — normal force on each tyre (Newtons, pixel-scaled)
+  // WHEEL LOADS — normal force on each tyre (Newtons, SI)
   // Computed by computeWeightTransfer() each step.
   // These scale the peak grip force in the Pacejka tire model.
-  // All four should sum to carMassKg × gravityPxPerSec2 ≈ 117 600 N.
+  // All four should sum to carMassKg × GRAVITY ≈ 11 772 N.
   // -----------------------------------------------------------
   wheelLoads: {
     frontLeft:  0,
@@ -180,7 +199,7 @@ const state = {
     rollingResistanceCoeff:  DEFAULT_ROLLING_RESISTANCE_COEFF,
     aeroDragCoeff:           DEFAULT_AERO_DRAG_COEFF,
     tireFrictionCoeff:       DEFAULT_TIRE_FRICTION_COEFF,
-    cogHeightPx:             5,                 // synced with COG_HEIGHT_PX default
+    cogHeight:               COG_HEIGHT,        // metres (was cogHeightPx in pixels)
     bounciness:              DEFAULT_BOUNCINESS,
     stallResistance:         DEFAULT_STALL_RESISTANCE,
 
@@ -194,17 +213,47 @@ const state = {
 
     motionBlurSamples:    6,
     motionBlurIntensity:  0.6,
-    motionBlurThreshold:  100,  // px/s; blur only appears above this speed
+    motionBlurThreshold:  10,   // m/s; blur only appears above this speed (~36 km/h)
 
-    mapWidth:   DEFAULT_MAP_WIDTH_PX,
-    mapHeight:  DEFAULT_MAP_HEIGHT_PX,
+    mapWidth:   DEFAULT_MAP_WIDTH,   // metres
+    mapHeight:  DEFAULT_MAP_HEIGHT,  // metres
 
     gaugeLabelScale: 1.0,   // multiplier for gauge tick-label font size
 
-    clutchBitePoint:  0.35, // synced with CLUTCH_BITE_POINT
-    clutchBiteRange:  0.20, // synced with CLUTCH_BITE_RANGE
-    clutchBiteCurve:  1.8,  // synced with CLUTCH_BITE_CURVE
-    clutchEngageTime: 0.30, // synced with CLUTCH_ENGAGE_TIME
+    clutchBitePoint:  0.35,
+    clutchBiteRange:  0.20,
+    clutchBiteCurve:  1.8,
+    clutchEngageTime: 0.30,
+
+    // --- Engine & Drivetrain (new sliders) ---
+    peakEngineTorqueNm: PEAK_ENGINE_TORQUE_NM,
+    idleRpm:            IDLE_RPM,
+    redlineRpm:         REDLINE_RPM,
+    stallRpm:           STALL_RPM,
+    wheelRadius:        WHEEL_RADIUS,        // metres
+    finalDriveRatio:    FINAL_DRIVE_RATIO,
+    brakeForce:         BRAKE_FORCE,         // Newtons
+    idleCreepForce:     IDLE_CREEP_FORCE,    // Newtons
+    gearRatio1:         GEAR_RATIOS['1'],
+    gearRatio2:         GEAR_RATIOS['2'],
+    gearRatio3:         GEAR_RATIOS['3'],
+    gearRatio4:         GEAR_RATIOS['4'],
+    gearRatio5:         GEAR_RATIOS['5'],
+    gearRatio6:         GEAR_RATIOS['6'],
+
+    // --- Tire Model (new sliders) ---
+    pacejkaB:              PACEJKA_B,
+    pacejkaC:              PACEJKA_C,
+    peakSlipAngleDeg:      TIRE_PEAK_SLIP_ANGLE_DEG,
+    peakSlipRatio:         TIRE_PEAK_SLIP_RATIO,
+    maxFrontWheelAngle:    MAX_FRONT_WHEEL_ANGLE_RAD,
+    steeringDragRange:     STEERING_DRAG_RANGE_PX,
+    steeringSelfCenterRate: STEERING_SELF_CENTER_RATE,
+
+    // --- World & Visual (new sliders) ---
+    constraintIterations:  CONSTRAINT_ITERATIONS,
+    checkerboardTileSize:  CHECKERBOARD_TILE_SIZE_PX,
+    maxTrailArrows:        MAX_TRAIL_ARROWS,
   },
 
 };

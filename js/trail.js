@@ -15,9 +15,9 @@
 
 import state from './state.js';
 import {
-  MAX_TRAIL_ARROWS,
   TRAIL_ARROW_BASE_LENGTH_PX,
-  TRAIL_REFERENCE_SPEED_PX,
+  TRAIL_REFERENCE_SPEED,
+  PIXELS_PER_METER,
 } from './constants.js';
 
 
@@ -35,10 +35,10 @@ export function spawnTrailArrow() {
   const trail  = state.trail;
   const params = state.params;
 
-  if (body.speed < 1.0) return; // no point drawing arrows at rest
+  if (body.speed < 0.1) return; // no point drawing arrows at rest (0.1 m/s ≈ 0.36 km/h)
 
   // Cull oldest arrow if at cap, before pushing the new one.
-  if (trail.arrows.length >= MAX_TRAIL_ARROWS) {
+  if (trail.arrows.length >= params.maxTrailArrows) {
     trail.arrows.shift();
   }
 
@@ -95,9 +95,10 @@ export function drawTrailArrows(ctx) {
     if (opacity < 0.01) continue; // skip nearly-invisible arrows
 
     // Size: length and lineWidth scale with speed.
-    const speedRatio  = arrow.speed / TRAIL_REFERENCE_SPEED_PX;
-    const arrowLength = TRAIL_ARROW_BASE_LENGTH_PX * Math.max(0.4, speedRatio);
-    const lineWidth   = Math.max(1, 2 * Math.min(speedRatio, 2.0));
+    // Arrow length converted to metres (base length is authored in pixels).
+    const speedRatio  = arrow.speed / TRAIL_REFERENCE_SPEED;
+    const arrowLength = (TRAIL_ARROW_BASE_LENGTH_PX / PIXELS_PER_METER) * Math.max(0.4, speedRatio);
+    const lineWidth   = Math.max(0.1, 0.2 * Math.min(speedRatio, 2.0)); // metres
 
     // Colour: green (slow) → yellow (reference speed) → red (fast).
     const arrowColor  = speedToColor(arrow.speed, opacity);
@@ -140,7 +141,7 @@ export function drawTrailArrows(ctx) {
 //   yellow (255, 220, 0) at speed = TRAIL_REFERENCE_SPEED_PX
 //   red (255, 50, 50) at speed = 2 × TRAIL_REFERENCE_SPEED_PX
 function speedToColor(speed, alpha) {
-  const ref = TRAIL_REFERENCE_SPEED_PX;
+  const ref = TRAIL_REFERENCE_SPEED;
 
   let red, green, blue;
 

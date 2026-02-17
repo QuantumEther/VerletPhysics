@@ -18,7 +18,7 @@ import {
   NEEDLE_RISE_BOOST,
   NEEDLE_FALL_BOOST,
   NEEDLE_FLUTTER_THRESHOLD,
-  KPH_TO_PX_PER_SEC,
+  KPH_TO_MPS,
 } from './constants.js';
 
 
@@ -152,10 +152,10 @@ export function initSliders() {
 
   // ---- Car physics ----
   bind('carMassKg',             'carMassKg',            parseFloat1, fmtInt);
-  bind('rollingResistanceCoeff','rollingResistanceCoeff',parseFloat1, fmt5);
-  bind('aeroDragCoeff',         'aeroDragCoeff',         parseFloat1, fmt5);
+  bind('rollingResistanceCoeff','rollingResistanceCoeff',parseFloat1, fmt3);
+  bind('aeroDragCoeff',         'aeroDragCoeff',         parseFloat1, fmt2);
   bind('tireFrictionCoeff',     'tireFrictionCoeff',     parseFloat1, fmt2);
-  bind('cogHeightPx',           'cogHeightPx',           parseFloat1, fmt1);
+  bind('cogHeight',             'cogHeight',             parseFloat1, fmt2);
   bind('bounciness',            'bounciness',            parseFloat1, fmt2);
   bind('stallResistance',       'stallResistance',       parseFloat1, fmt2);
 
@@ -195,6 +195,36 @@ export function initSliders() {
     return parseFloat(s) / 100;
   }, (v) => v.toFixed(1) + '×');
 
+  // ---- Engine & Drivetrain ----
+  bind('peakEngineTorqueNm', 'peakEngineTorqueNm', parseFloat1, fmtInt);
+  bind('idleRpm',            'idleRpm',            parseFloat1, fmtInt);
+  bind('redlineRpm',         'redlineRpm',         parseFloat1, fmtInt);
+  bind('stallRpm',           'stallRpm',           parseFloat1, fmtInt);
+  bind('wheelRadius',        'wheelRadius',        parseFloat1, fmt2);
+  bind('finalDriveRatio',    'finalDriveRatio',    parseFloat1, fmt1);
+  bind('brakeForce',         'brakeForce',         parseFloat1, fmtInt);
+  bind('idleCreepForce',     'idleCreepForce',     parseFloat1, fmtInt);
+  bind('gearRatio1',         'gearRatio1',         parseFloat1, fmt2);
+  bind('gearRatio2',         'gearRatio2',         parseFloat1, fmt2);
+  bind('gearRatio3',         'gearRatio3',         parseFloat1, fmt2);
+  bind('gearRatio4',         'gearRatio4',         parseFloat1, fmt2);
+  bind('gearRatio5',         'gearRatio5',         parseFloat1, fmt2);
+  bind('gearRatio6',         'gearRatio6',         parseFloat1, fmt2);
+
+  // ---- Tire Model ----
+  bind('pacejkaB',              'pacejkaB',              parseFloat1, fmt1);
+  bind('pacejkaC',              'pacejkaC',              parseFloat1, fmt2);
+  bind('peakSlipAngleDeg',      'peakSlipAngleDeg',      parseFloat1, fmt1);
+  bind('peakSlipRatio',         'peakSlipRatio',         parseFloat1, fmt2);
+  bind('maxFrontWheelAngle',    'maxFrontWheelAngle',    parseFloat1, fmt2);
+  bind('steeringDragRange',     'steeringDragRange',     parseFloat1, fmtInt);
+  bind('steeringSelfCenterRate','steeringSelfCenterRate',parseFloat1, fmt1);
+
+  // ---- World & Visual ----
+  bind('constraintIterations',  'constraintIterations',  parseInt1,   fmtInt);
+  bind('checkerboardTileSize',  'checkerboardTileSize',  parseFloat1, fmtInt);
+  bind('maxTrailArrows',        'maxTrailArrows',        parseInt1,   fmtInt);
+
   // ---- Engine toggle button ----
   const engineToggleButton = document.getElementById('engineToggle');
   if (engineToggleButton) {
@@ -227,7 +257,7 @@ export function updateInfoBar() {
   const trail  = state.trail;
 
   setInfoCell('velocityDisplay',
-    `${(body.speed / KPH_TO_PX_PER_SEC).toFixed(1)} km/h`);
+    `${(body.speed / KPH_TO_MPS).toFixed(1)} km/h`);
 
   setInfoCell('rpmDisplay',
     engine.isStalled ? 'STALL' :
@@ -250,4 +280,39 @@ export function updateInfoBar() {
 function setInfoCell(elementId, text) {
   const element = document.getElementById(elementId);
   if (element) element.textContent = text;
+}
+
+
+// =============================================================
+// CHANGE LOGGER
+// =============================================================
+
+// Attaches delegated event listeners to the document that log every
+// UI input change to the browser console. Uses a single listener for
+// each event type rather than per-element listeners, so it catches
+// any slider or button added to the page without needing extra wiring.
+//
+// Call once at startup from main.js. Output format:
+//   [UI] sliderId = 1234
+//   [UI] buttonId clicked
+export function initChangeLogger() {
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (el.type === 'range' || el.type === 'text' || el.type === 'number') {
+      console.log(`[UI] ${el.id} = ${el.value}`);
+    }
+  });
+  document.addEventListener('change', (e) => {
+    const el = e.target;
+    // Log select elements and checkboxes on change.
+    if (el.tagName === 'SELECT' || el.type === 'checkbox') {
+      console.log(`[UI] ${el.id} = ${el.value}`);
+    }
+  });
+  document.addEventListener('click', (e) => {
+    const el = e.target;
+    if (el.tagName === 'BUTTON' && el.id) {
+      console.log(`[UI] ${el.id} clicked`);
+    }
+  });
 }

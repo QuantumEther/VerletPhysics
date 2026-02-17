@@ -28,10 +28,9 @@ import state from './state.js';
 import {
   CAR_HALF_WIDTH,
   CAR_HALF_LENGTH,
-  CHECKERBOARD_TILE_SIZE_PX,
   CLUTCH_BITE_POINT,
   CLUTCH_BITE_RANGE,
-  KPH_TO_PX_PER_SEC,
+  PIXELS_PER_METER,
   NEEDLE_STIFFNESS,
   NEEDLE_DAMPING,
   NEEDLE_RISE_BOOST,
@@ -53,6 +52,9 @@ export function applyCameraTransform(ctx, viewportWidth, viewportHeight) {
   ctx.translate(viewportWidth * 0.5, viewportHeight * 0.5);
   // Scale by zoom (< 1 = zoomed out, = 1 = normal).
   ctx.scale(state.camera.zoom, state.camera.zoom);
+  // Convert world-space metres to pixels. All world geometry (car, trail, etc.)
+  // is now authored in metres; this single scale is the only place px/m appears.
+  ctx.scale(PIXELS_PER_METER, PIXELS_PER_METER);
   // Offset so the camera's world position is at the viewport centre.
   ctx.translate(-state.camera.x, -state.camera.y);
 }
@@ -75,15 +77,19 @@ export function drawCheckerboard(ctx, viewportWidth, viewportHeight) {
   const camera = state.camera;
   const body   = state.body;
   const params = state.params;
-  const tile   = CHECKERBOARD_TILE_SIZE_PX;
+  // Tile size in metres: the slider stores the visual px size; divide by scale to get world size.
+  const tile   = params.checkerboardTileSize / PIXELS_PER_METER;
 
-  // How many tile widths the viewport covers (accounting for zoom).
-  const tilesAcross = (viewportWidth  / camera.zoom / tile) + 2;
-  const tilesDown   = (viewportHeight / camera.zoom / tile) + 2;
+  // Effective pixels-per-metre including zoom; used to convert viewport px → metres.
+  const effectiveScale = camera.zoom * PIXELS_PER_METER;
 
-  // Top-left visible tile index.
-  const startTileX = Math.floor((camera.x - viewportWidth  * 0.5 / camera.zoom) / tile) - 1;
-  const startTileY = Math.floor((camera.y - viewportHeight * 0.5 / camera.zoom) / tile) - 1;
+  // How many tiles the viewport covers in world-space (metres).
+  const tilesAcross = (viewportWidth  / effectiveScale / tile) + 2;
+  const tilesDown   = (viewportHeight / effectiveScale / tile) + 2;
+
+  // Top-left visible tile index (camera.x/y are in metres).
+  const startTileX = Math.floor((camera.x - viewportWidth  * 0.5 / effectiveScale) / tile) - 1;
+  const startTileY = Math.floor((camera.y - viewportHeight * 0.5 / effectiveScale) / tile) - 1;
 
   // Motion blur: draw the checkerboard several times with decreasing alpha,
   // offset opposite to the velocity direction so it looks like the ground is
@@ -97,7 +103,7 @@ export function drawCheckerboard(ctx, viewportWidth, viewportHeight) {
 
   if (speed > params.motionBlurThreshold && blurSamples > 1) {
     sampleCount          = blurSamples;
-    blurOffsetPerSample  = Math.min(speed * 0.025, 8); // px per sample, world space
+    blurOffsetPerSample  = Math.min(speed * 0.0025, 0.8); // metres per sample, world space
   }
 
   for (let sample = sampleCount - 1; sample >= 0; sample--) {

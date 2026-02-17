@@ -35,15 +35,15 @@
 
 import state from './state.js';
 import {
-  DEFAULT_MAP_WIDTH_PX,
-  DEFAULT_MAP_HEIGHT_PX,
+  DEFAULT_MAP_WIDTH,
+  DEFAULT_MAP_HEIGHT,
   MAX_FRAME_TIME_SEC,
   CAR_HALF_LENGTH,
   CAR_HALF_WIDTH,
   TACHOMETER_MAX_RPM,
   TACHOMETER_REDLINE_RPM,
   SPEEDOMETER_MAX_KPH,
-  KPH_TO_PX_PER_SEC,
+  KPH_TO_MPS,
 } from './constants.js';
 
 import { initInput } from './input.js';
@@ -85,7 +85,7 @@ import {
   drawAnalogGauge,
 } from './renderer.js';
 
-import { initSliders, updateInfoBar, createNeedlePhysics } from './ui.js';
+import { initSliders, updateInfoBar, createNeedlePhysics, initChangeLogger } from './ui.js';
 
 
 // =============================================================
@@ -139,6 +139,9 @@ initInput(simCanvas);
 // into state.params so physics starts with the correct parameters.
 initSliders();
 
+// Attach delegated console logger for all UI input events.
+initChangeLogger();
+
 // Bind canvas resolution slider (not part of state.params, manual handler).
 const canvasResolutionSlider = document.getElementById('canvasResolutionSlider');
 const canvasResolutionValue  = document.getElementById('canvasResolutionValue');
@@ -158,8 +161,8 @@ const rpmNeedle  = createNeedlePhysics();
 const speedNeedle = createNeedlePhysics();
 const latGNeedle  = createNeedlePhysics();
 
-// Place the car in the centre of the default map.
-initializeCarBody(DEFAULT_MAP_WIDTH_PX * 0.5, DEFAULT_MAP_HEIGHT_PX * 0.5);
+// Place the car in the centre of the default map (coordinates in metres).
+initializeCarBody(DEFAULT_MAP_WIDTH * 0.5, DEFAULT_MAP_HEIGHT * 0.5);
 
 // Initial derivation so body state is valid before the first render.
 computeBodyDerivedState(1 / 60);
@@ -381,7 +384,7 @@ function drawGauges() {
   });
 
   // Speedometer: 0–200 km/h.
-  const speedKph       = state.body.speed / KPH_TO_PX_PER_SEC;
+  const speedKph       = state.body.speed / KPH_TO_MPS;
   const speedNormalized = speedNeedle.step(speedKph / SPEEDOMETER_MAX_KPH);
   drawAnalogGauge(speedCtx, speedCanvas.width, speedCanvas.height, {
     value:           speedKph,
@@ -398,8 +401,8 @@ function drawGauges() {
   });
 
   // Lateral G gauge: 0–1.5 G (shows cornering intensity).
-  // Computed from state.body.lateralAccel in px/s² → converted to G.
-  const lateralG       = Math.abs(state.body.lateralAccel) / (9.8 * 10); // px/s² ÷ (g × px/m)
+  // lateralAccel is in m/s²; divide by 9.81 to convert to g-force.
+  const lateralG       = Math.abs(state.body.lateralAccel) / 9.81;
   const lateralGMax    = 1.5;
   const latGNormalized = latGNeedle.step(lateralG / lateralGMax);
   drawAnalogGauge(latGCtx, latGCanvas.width, latGCanvas.height, {

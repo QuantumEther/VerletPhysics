@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>VerletPhysics — Diagram Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      padding: 24px;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 8px; color: #7fc8f8; }
+    p  { font-size: 0.85rem; color: #999; margin-bottom: 20px; }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+    }
+    button {
+      padding: 8px 18px;
+      border: none;
+      border-radius: 6px;
+      background: #3a86ff;
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+    }
+    button:hover { background: #2a76ef; }
+    button.secondary { background: #444; }
+    button.secondary:hover { background: #555; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(520px, 1fr));
+      gap: 24px;
+    }
+    .diagram-card {
+      background: #16213e;
+      border: 1px solid #2a2a4a;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .diagram-card h2 {
+      font-size: 0.9rem;
+      padding: 10px 14px;
+      background: #0f3460;
+      color: #7fc8f8;
+      letter-spacing: 0.5px;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #fff;
+    }
+    .card-footer {
+      padding: 8px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .card-footer span { font-size: 0.75rem; color: #666; }
+    .card-footer button { padding: 4px 12px; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+
+<h1>VerletPhysics — Diagram Generator</h1>
+<p>Diagrams are rendered client-side. Click "Download All" to save all as PNGs, or use the individual buttons per card.</p>
+
+<div class="toolbar">
+  <button id="btnDownloadAll">⬇ Download All PNGs</button>
+  <button class="secondary" id="btnRedraw">↺ Redraw</button>
+</div>
+
+<div class="grid" id="diagramGrid"></div>
+
+<script>
+// ===================================================================
+// DIAGRAM DEFINITIONS
+// Each entry: { id, title, draw(ctx, w, h) }
+// ===================================================================
+
+const DIAGRAMS = [
+  {
+    id: '01_torque_curve',
+    title: '01 — Engine Torque Curve',
+    draw: drawTorqueCurve,
+  },
+  {
+    id: '02_pacejka_curve',
+    title: '02 — Pacejka Lateral Force vs Slip Angle',
+    draw: drawPacejkaCurve,
+  },
+  {
+    id: '03_force_budget',
+    title: '03 — Force Budget (Drive vs Drag per Gear)',
+    draw: drawForceBudget,
+  },
+  {
+    id: '04_clutch_zones',
+    title: '04 — Clutch Pedal Engagement Zones',
+    draw: drawClutchZones,
+  },
+  {
+    id: '05_physics_flow',
+    title: '05 — Physics Pipeline Flow',
+    draw: drawPhysicsFlow,
+  },
+  {
+    id: '06_unit_analysis',
+    title: '06 — Unit System Analysis (Before / After)',
+    draw: drawUnitAnalysis,
+  },
+  {
+    id: '07_verlet_diagram',
+    title: '07 — Verlet Integration Diagram',
+    draw: drawVerletDiagram,
+  },
+  {
+    id: '08_weight_transfer',
+    title: '08 — Weight Transfer Under Acceleration',
+    draw: drawWeightTransfer,
+  },
+];
+
+const CANVAS_W = 800;
+const CANVAS_H = 480;
+
+// ===================================================================
+// HELPERS
+// ===================================================================
+
+function clr(ctx, w, h) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, w, h);
+}
+
+function axisH(ctx, x0, y0, w, label, color = '#333') {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x0 + w, y0);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(label, x0 + w + 2, y0 + 4);
+}
+
+function axisV(ctx, x0, y0, h, label, color = '#333') {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x0, y0 - h);
+  ctx.stroke();
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.font = '12px sans-serif';
+  ctx.translate(x0, y0 - h - 6);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.fillText(label, 0, 0);
+  ctx.restore();
+}
+
+function gridLines(ctx, x0, y0, w, h, xSteps, ySteps) {
+  ctx.strokeStyle = '#eee';
+  ctx.lineWidth = 0.8;
+  for (let i = 1; i < xSteps; i++) {
+    const x = x0 + (w / xSteps) * i;
+    ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 - h); ctx.stroke();
+  }
+  for (let j = 1; j < ySteps; j++) {
+    const y = y0 - (h / ySteps) * j;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); ctx.stroke();
+  }
+}
+
+function title(ctx, w, text) {
+  ctx.fillStyle = '#222';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, w / 2, 22);
+}
+
+function label(ctx, x, y, text, color = '#555', size = 11) {
+  ctx.fillStyle = color;
+  ctx.font = `${size}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(text, x, y);
+}
+
+// ===================================================================
+// 01 — TORQUE CURVE
+// ===================================================================
+function drawTorqueCurve(ctx, w, h) {
+  clr(ctx, w, h);
+  title(ctx, w, 'Engine Torque Curve (Parabolic, Peak at 4500 RPM)');
+
+  const margin = { l: 70, r: 30, t: 40, b: 50 };
+  const plotW = w - margin.l - margin.r;
+  const plotH = h - margin.t - margin.b;
+  const x0 = margin.l, y0 = h - margin.b;
+
+  const IDLE_RPM = 800, REDLINE_RPM = 7000, PEAK_RPM = 4500;
+  const PEAK_TORQUE = 2800;
+
+  gridLines(ctx, x0, y0, plotW, plotH, 8, 5);
+  axisH(ctx, x0, y0, plotW, 'RPM →');
+  axisV(ctx, x0, y0, plotH, 'Torque (Nm) ↑');
+
+  // RPM axis labels
+  ctx.fillStyle = '#666'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  for (let rpm = 0; rpm <= 7000; rpm += 1000) {
+    const x = x0 + (rpm / 7000) * plotW;
+    ctx.fillText(rpm, x, y0 + 16);
+  }
+  // Torque axis labels
+  ctx.textAlign = 'right';
+  for (let t = 0; t <= PEAK_TORQUE; t += 700) {
+    const y = y0 - (t / PEAK_TORQUE) * plotH;
+    ctx.fillText(t, x0 - 6, y + 4);
+  }
+
+  // Torque curve
+  ctx.beginPath();
+  ctx.strokeStyle = '#e63946';
+  ctx.lineWidth = 2.5;
+  for (let rpm = IDLE_RPM; rpm <= REDLINE_RPM; rpm += 50) {
+    const range = REDLINE_RPM - IDLE_RPM;
+    const dist = (rpm - PEAK_RPM) / range;
+    const norm = Math.max(0, 1.0 - 2.5 * dist * dist);
+    const torque = PEAK_TORQUE * norm;
+    const x = x0 + (rpm / 7000) * plotW;
+    const y = y0 - (torque / PEAK_TORQUE) * plotH;
+    rpm === IDLE_RPM ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Peak annotation
+  const peakX = x0 + (PEAK_RPM / 7000) * plotW;
+  const peakY = y0 - plotH;
+  ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(peakX, y0); ctx.lineTo(peakX, peakY); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#e63946'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Peak: 2800 Nm @ 4500 RPM', peakX, peakY - 8);
+
+  // Redline annotation
+  const redX = x0 + (REDLINE_RPM / 7000) * plotW;
+  ctx.fillStyle = '#e63946'; ctx.font = '11px sans-serif';
+  ctx.fillText('Redline', redX, y0 + 30);
+  ctx.fillStyle = 'rgba(230,57,70,0.08)';
+  ctx.fillRect(x0 + (6500 / 7000) * plotW, y0 - plotH, plotW - (6500 / 7000) * plotW, plotH);
+}
+
+// ===================================================================
+// 02 — PACEJKA CURVE
+// ===================================================================
+function drawPacejkaCurve(ctx, w, h) {
+  clr(ctx, w, h);
+  title(ctx, w, 'Pacejka Tire Model — Lateral Force vs Slip Angle (B=10, C=1.9)');
+
+  const margin = { l: 70, r: 30, t: 40, b: 50 };
+  const plotW = w - margin.l - margin.r;
+  const plotH = h - margin.t - margin.b;
+  const x0 = margin.l, y0 = h - margin.b;
+
+  const B = 10, C = 1.9;
+  const PEAK_DEG = 8;
+  const NORMAL_LOAD = 1000; // Newtons for illustration
+  const MU = 1.0;
+  const maxAngle = 30; // degrees shown
+
+  gridLines(ctx, x0, y0, plotW, plotH, 6, 5);
+  axisH(ctx, x0, y0, plotW, 'Slip Angle (deg) →');
+  axisV(ctx, x0, y0, plotH, 'Lateral Force (N) ↑');
+
+  // Axis labels
+  ctx.fillStyle = '#666'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  for (let d = 0; d <= maxAngle; d += 5) {
+    const x = x0 + (d / maxAngle) * plotW;
+    ctx.fillText(d + '°', x, y0 + 16);
+  }
+  ctx.textAlign = 'right';
+  const maxF = NORMAL_LOAD * MU;
+  for (let f = 0; f <= maxF; f += 200) {
+    const y = y0 - (f / maxF) * plotH;
+    ctx.fillText(f, x0 - 6, y + 4);
+  }
+
+  // Pacejka curve
+  ctx.beginPath();
+  ctx.strokeStyle = '#457b9d'; ctx.lineWidth = 2.5;
+  const peakRad = PEAK_DEG * Math.PI / 180;
+  for (let deg = 0; deg <= maxAngle; deg += 0.5) {
+    const slipRad = deg * Math.PI / 180;
+    const norm = slipRad / peakRad;
+    const force = NORMAL_LOAD * MU * Math.sin(C * Math.atan(B * norm));
+    const x = x0 + (deg / maxAngle) * plotW;
+    const y = y0 - (force / maxF) * plotH;
+    deg === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Peak annotation
+  const peakX = x0 + (PEAK_DEG / maxAngle) * plotW;
+  const peakForce = NORMAL_LOAD * MU * Math.sin(C * Math.atan(B * 1));
+  const peakY = y0 - (peakForce / maxF) * plotH;
+  ctx.setLineDash([4, 3]); ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(peakX, y0); ctx.lineTo(peakX, peakY); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#457b9d'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(`Peak @ ${PEAK_DEG}°  F=${peakForce.toFixed(0)} N`, peakX + 6, peakY + 14);
+
+  // Labels
+  ctx.fillStyle = '#999'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Grip Region', x0 + (PEAK_DEG / maxAngle) * plotW * 0.5, y0 - 10);
+  ctx.fillText('Slide Region', x0 + (PEAK_DEG / maxAngle) * plotW + plotW * 0.3, y0 - 10);
+}
+
+// ===================================================================
+// 03 — FORCE BUDGET
+// ===================================================================
+function drawForceBudget(ctx, w, h) {
+  clr(ctx, w, h);
+  title(ctx, w, 'Force Budget — Drive Force vs Drag @ Peak RPM per Gear (at 60 km/h)');
+
+  const margin = { l: 80, r: 30, t: 50, b: 60 };
+  const plotW = w - margin.l - margin.r;
+  const plotH = h - margin.t - margin.b;
+  const x0 = margin.l, y0 = h - margin.b;
+
+  const gears = [
+    { name: '1st', ratio: 3.5 },
+    { name: '2nd', ratio: 2.1 },
+    { name: '3rd', ratio: 1.4 },
+    { name: '4th', ratio: 1.0 },
+    { name: '5th', ratio: 0.75 },
+    { name: '6th', ratio: 0.58 },
+  ];
+  const FINAL = 4.1, WHEEL_R = 0.35, PEAK_TORQUE = 2800;
+  const MASS = 1200, GRAVITY = 9.81, ROLL_C = 0.012, AERO_C = 0.4;
+  const speed_mps = 60 / 3.6; // 60 km/h
+  const rollingDrag = ROLL_C * MASS * GRAVITY;
+  const aeroDrag    = AERO_C * speed_mps * speed_mps;
+  const totalDrag   = rollingDrag + aeroDrag;
+
+  const drives = gears.map(g => PEAK_TORQUE * Math.abs(g.ratio) * FINAL / WHEEL_R);
+  const maxF = Math.max(...drives) * 1.1;
+
+  gridLines(ctx, x0, y0, plotW, plotH, gears.length, 5);
+  axisH(ctx, x0, y0, plotW, 'Gear →');
+  axisV(ctx, x0, y0, plotH, 'Force (N) ↑');
+
+  // Y axis labels
+  ctx.fillStyle = '#666'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+  for (let i = 0; i <= 5; i++) {
+    const f = (maxF / 5) * i;
+    const y = y0 - (f / maxF) * plotH;
+    ctx.fillText(Math.round(f / 1000) + 'k', x0 - 6, y + 4);
+  }
+
+  const barW = plotW / gears.length * 0.5;
+
+  gears.forEach((g, i) => {
+    const barX = x0 + (i + 0.5) * (plotW / gears.length) - barW / 2;
+    const driveH = (drives[i] / maxF) * plotH;
+    const dragH  = (totalDrag / maxF) * plotH;
+
+    // Drive bar
+    ctx.fillStyle = '#2a9d8f';
+    ctx.fillRect(barX, y0 - driveH, barW, driveH);
+
+    // Net force bar (drive - drag)
+    const net = drives[i] - totalDrag;
+    if (net > 0) {
+      ctx.fillStyle = 'rgba(42,157,143,0.3)';
+      ctx.fillRect(barX, y0 - driveH, barW, driveH - dragH);
+    }
+
+    // Gear label
+    ctx.fillStyle = '#333'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(g.name, barX + barW / 2, y0 + 16);
+    ctx.fillText(Math.round(drives[i] / 1000) + 'k N', barX + barW / 2, y0 - driveH - 4);
+  });
+
+  // Drag line
+  const dragY = y0 - (totalDrag / maxF) * plotH;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = '#e63946'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x0, dragY); ctx.lineTo(x0 + plotW, dragY); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#e63946'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(`Total Drag: ${Math.round(totalDrag)} N`, x0 + 4, dragY - 6);
+
+  // Legend
+  ctx.fillStyle = '#2a9d8f';
+  ctx.fillRect(x0, y0 + 35, 16, 12);
+  ctx.fillStyle = '#555'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('Drive Force (N)', x0 + 20, y0 + 45);
+}
+
+// ===================================================================
+// 04 — CLUTCH ZONES
+// ===================================================================
+function drawClutchZones(ctx, w, h) {
+  clr(ctx, w, h);
+  title(ctx, w, 'Clutch Pedal Zones & Engagement Curve (Bite: 0.35, Range: 0.20, Curve: 1.8)');
+
+  const margin = { l: 80, r: 30, t: 40, b: 60 };
+  const plotW = w - margin.l - margin.r;
+  const plotH = h - margin.t - margin.b;
+  const x0 = margin.l, y0 = h - margin.b;
+
+  const BITE = 0.35, RANGE = 0.20, CURVE = 1.8;
+
+  // Zone fills
+  ctx.fillStyle = 'rgba(230,57,70,0.1)';
+  ctx.fillRect(x0, y0 - plotH, BITE * plotW, plotH); // disengaged zone
+  ctx.fillStyle = 'rgba(255,190,11,0.15)';
+  ctx.fillRect(x0 + BITE * plotW, y0 - plotH, RANGE * plotW, plotH); // bite zone
+  ctx.fillStyle = 'rgba(42,157,143,0.1)';
+  ctx.fillRect(x0 + (BITE + RANGE) * plotW, y0 - plotH,
+               (1 - BITE - RANGE) * plotW, plotH); // engaged zone
+
+  gridLines(ctx, x0, y0, plotW, plotH, 5, 5);
+  axisH(ctx, x0, y0, plotW, 'Pedal Position (0=floor) →');
+  axisV(ctx, x0, y0, plotH, 'Engagement [0→1] ↑');
+
+  // Axis labels
+  ctx.fillStyle = '#666'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  for (let p = 0; p <= 1; p += 0.2) {
+    ctx.fillText(p.toFixed(1), x0 + p * plotW, y0 + 16);
+  }
+  ctx.textAlign = 'right';
+  for (let e = 0; e <= 1; e += 0.25) {
+    ctx.fillText(e.toFixed(2), x0 - 6, y0 - e * plotH + 4);
+  }
+
+  // Engagement curve
+  ctx.beginPath(); ctx.strokeStyle = '#2a9d8f'; ctx.lineWidth = 2.5;
+  for (let p = 0; p <= 1; p += 0.005) {
+    let engagement = 0;
+    if (p >= BITE) {
+      const slip = (p - BITE) / RANGE;
+      if (slip >= 1) engagement = 1;
+      else engagement = Math.pow(slip, CURVE);
+    }
+    const x = x0 + p * plotW;
+    const y = y0 - engagement * plotH;
+    p === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Zone labels
+  const zoneY = y0 - plotH + 14;
+  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillStyle = '#e63946';
+  ctx.fillText('DISENGAGED', x0 + (BITE / 2) * plotW, zoneY);
+  ctx.fillStyle = '#d4a017';
+  ctx.fillText('BITE ZONE', x0 + (BITE + RANGE / 2) * plotW, zoneY);
+  ctx.fillStyle = '#2a9d8f';
+  ctx.fillText('ENGAGED', x0 + (BITE + RANGE + (1 - BITE - RANGE) / 2) * plotW, zoneY);
+}
+
+// ===================================================================
+// 05 — PHYSICS PIPELINE FLOW
+// ===================================================================
+function drawPhysicsFlow(ctx, w, h) {
+  clr(ctx, w, h);
+  title(ctx, w, 'Physics Pipeline — Per Sub-Step Call Order');
+
+  const steps = [
+    { label: '1. updateSteering(dt)', color: '#457b9d' },
+    { label: '2. updateEngine(dt)', color: '#2a9d8f' },
+    { label: '3. computeBodyDerivedState(dt)', color: '#2a9d8f' },
+    { label: '4. computeWeightTransfer()', color: '#e76f51' },
+    { label: '5. computeTireForces()', color: '#e76f51' },
+    { label: '6. computeDragForces()', color: '#e76f51' },
+    { label: '7. computeBrakeForce()', color: '#e76f51' },
+    { label: '8. Sum → net F & torque → a', color: '#6a4c93' },
+    { label: '9. verletIntegrateAllPoints(dt)', color: '#6a4c93' },
+    { label: '10. solveRigidBodyConstraints()', color: '#1982c4' },
+    { label: '11. clampParticleDisplacements()', color: '#1982c4' },
+    { label: '12. handleBoundaryCollisions()', color: '#1982c4' },
+    { label: '13. solveRigidBodyConstraints() ×2', color: '#1982c4' },
+    { label: '14. computeBodyDerivedState(dt)', color: '#2a9d8f' },
+    { label: '15. updateCamera(dt)', color: '#457b9d' },
+    { label: '16. spawn/age trail arrows', color: '#999' },
+  ];
+
+  const cols = 2;
+  const colW = (w - 60) / cols;
+  const rowH = (h - 60) / Math.ceil(steps.length / cols);
+
+  steps.forEach((step, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = 30 + col * colW + 10;
+    const y = 40 + row * rowH + 6;
+
+    ctx.fillStyle = step.color + '22';
+    ctx.strokeStyle = step.color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x, y, colW - 20, rowH - 8, 5);
+    ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = '#222'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(step.label, x + 8, y + (rowH - 8) / 2 + 4);
+
+    // Arrow down within column
+    if (row < Math.ceil(steps.length / cols) - 1 && col === i % cols) {
+      ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1;
+      const midX = x + (colW - 20) / 2;
+      const fromY = y + rowH - 8;
+      const toY = y + rowH;
+      ctx.beginPath(); ctx.moveTo(midX, fromY); ctx.lineTo(midX, toY); ctx.stroke();
+    }
+  });
+}
+
+// ===================================================================
+// 06 — UNIT ANALYSIS
+// ===================================================================
+function drawUnitAnalysis(ctx, w, h) {
+  clr(ctx, w, h);
+  title(ctx, w, 'Unit System — Before (pixels) vs After (SI metres)');
+
+  const rows = [
+    { name: 'CAR_HALF_WIDTH',           old: '20 px',       new_: '2.0 m',          factor: '×0.1' },
+    { name: 'CAR_HALF_LENGTH',          old: '40 px',       new_: '4.0 m',          factor: '×0.1' },
+    { name: 'GRAVITY',                  old: '98 px/s²',    new_: '9.81 m/s²',      factor: '÷10' },
+    { name: 'COG_HEIGHT',               old: '5 px',        new_: '0.5 m',          factor: '×0.1' },
+    { name: 'WHEEL_RADIUS',             old: '24 px (2.4m!)',new_: '0.35 m',         factor: 'fixed' },
+    { name: 'MOMENT_OF_INERTIA',        old: '~800k kg·px²', new_: '~8000 kg·m²',   factor: '÷100' },
+    { name: 'AERO_DRAG_COEFF',          old: '0.00018',     new_: '0.4 N·s²/m²',    factor: 'fixed' },
+    { name: 'ROLLING_RESISTANCE_COEFF', old: '0.001',       new_: '0.012',          factor: 'real val' },
+    { name: 'BRAKE_FORCE',              old: '800',         new_: '9810 N',         factor: '×12.3' },
+    { name: 'KPH_TO_MPS',              old: '2.778 (px)',   new_: '0.2778 m/s',     factor: '÷10' },
+    { name: 'MAP_WIDTH',                old: '3000 px',     new_: '300 m',          factor: '÷10' },
+    { name: 'TRAIL_REFERENCE_SPEED',    old: '250 px/s',    new_: '25 m/s',         factor: '÷10' },
+  ];
+
+  const margin = { l: 20, t: 42, r: 10, b: 10 };
+  const rowH = (h - margin.t - margin.b) / rows.length;
+  const cols = [margin.l, 200, 340, 490, 620];
+
+  ['Constant', 'Old Value', 'New Value', 'Change'].forEach((hdr, i) => {
+    ctx.fillStyle = '#333'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(hdr, cols[i], margin.t - 4);
+  });
+
+  // Header underline
+  ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(margin.l, margin.t); ctx.lineTo(w - margin.r, margin.t); ctx.stroke();
+
+  rows.forEach((row, i) => {
+    const y = margin.t + (i + 0.75) * rowH;
+    const bg = i % 2 === 0 ? '#f9f9f9' : '#fff';
+    ctx.fillStyle = bg;
+    ctx.fillRect(margin.l, margin.t + i * rowH, w - margin.l - margin.r, rowH);
+
+    ctx.fillStyle = '#333'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(row.name, cols[0], y);
+    ctx.fillStyle = '#c0392b';
+    ctx.fillText(row.old,  cols[1], y);
+    ctx.fillStyle = '#27ae60';
+    ctx.fillText(row.new_, cols[2], y);
+    ctx.fillStyle = '#2980b9';
+    ctx.fillText(row.factor, cols[3], y);
+  });
+}
+
+// ===================================================================
+// 07 — VERLET DIAGRAM
+// ===================================================================
+function drawVerletDiagram(ctx, w, h) {
+  clr(ctx, w, h);
+  title(ctx, w, 'Verlet Integration — Four-Point Rigid Body');
+
+  // Draw car rectangle
+  const cx = w * 0.35, cy = h * 0.5;
+  const hw = 80, hl = 120;
+
+  // Wheel positions (top-down view, rotated slightly)
+  const angle = 0.3;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const rot = (dx, dy) => ({
+    x: cx + dx * cos - dy * sin,
+    y: cy + dx * sin + dy * cos
+  });
+
+  const wheels = {
+    FL: rot(-hw, -hl), FR: rot(hw, -hl),
+    RL: rot(-hw,  hl), RR: rot(hw,  hl),
+  };
+
+  // Car body fill
+  ctx.fillStyle = 'rgba(255,217,102,0.25)';
+  ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(wheels.FL.x, wheels.FL.y);
+  ctx.lineTo(wheels.FR.x, wheels.FR.y);
+  ctx.lineTo(wheels.RR.x, wheels.RR.y);
+  ctx.lineTo(wheels.RL.x, wheels.RL.y);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // Constraint lines
+  ctx.strokeStyle = '#e76f51'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+  // Diagonals
+  ctx.beginPath(); ctx.moveTo(wheels.FL.x, wheels.FL.y); ctx.lineTo(wheels.RR.x, wheels.RR.y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(wheels.FR.x, wheels.FR.y); ctx.lineTo(wheels.RL.x, wheels.RL.y); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Wheel dots + prev position + velocity arrows
+  Object.entries(wheels).forEach(([name, pos]) => {
+    // Prev position (ghost)
+    ctx.beginPath(); ctx.arc(pos.x - 12, pos.y - 5, 6, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(150,150,150,0.3)'; ctx.fill();
+
+    // Velocity vector
+    ctx.strokeStyle = '#457b9d'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(pos.x, pos.y); ctx.lineTo(pos.x + 15, pos.y - 6); ctx.stroke();
+
+    // Wheel dot
+    ctx.beginPath(); ctx.arc(pos.x, pos.y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = '#333'; ctx.fill();
+
+    // Label
+    ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(name, pos.x, pos.y + 20);
+  });
+
+  // Legend on right
+  const lx = w * 0.72, ly = h * 0.2;
+  const legendItems = [
+    { color: '#333',   label: 'Current position (x, y)' },
+    { color: 'rgba(150,150,150,0.5)', label: 'Previous position (prevX, prevY)' },
+    { color: '#457b9d', label: 'Velocity = (pos − prev) / dt' },
+    { color: '#e76f51', label: 'Diagonal constraints (prevent shear)' },
+    { color: '#b8860b', label: 'Side/axle constraints (4 edges)' },
+  ];
+  ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+  legendItems.forEach((item, i) => {
+    const y = ly + i * 24;
+    ctx.fillStyle = item.color;
+    ctx.fillRect(lx, y - 8, 14, 10);
+    ctx.fillStyle = '#444';
+    ctx.fillText(item.label, lx + 20, y);
+  });
+
+  // Verlet equation
+  ctx.fillStyle = '#222'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('x_new = x + (x − x_prev) + a·dt²', w * 0.72, h * 0.85);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#666';
+  ctx.fillText('Velocity implicit in position gap — no explicit v stored', w * 0.72, h * 0.85 + 18);
+}
+
+// ===================================================================
+// 08 — WEIGHT TRANSFER
+// ===================================================================
+function drawWeightTransfer(ctx, w, h) {
+  clr(ctx, w, h);
+  title(ctx, w, 'Weight Transfer — Static vs Under 0.5g Forward Acceleration');
+
+  const MASS = 1200, G = 9.81;
+  const totalW = MASS * G; // ~11772 N
+
+  // Static: equal distribution
+  const staticLoads = { FL: 2943, FR: 2943, RL: 2943, RR: 2943 };
+
+  // Under 0.5g forward acceleration
+  const a = 0.5 * G;
+  const COG_H = 0.5, WHEELBASE = 8.0;
+  const longTransfer = MASS * a * COG_H / WHEELBASE; // ~367 N
+  const dynamicLoads = {
+    FL: 2943 - longTransfer * 0.5,
+    FR: 2943 - longTransfer * 0.5,
+    RL: 2943 + longTransfer * 0.5,
+    RR: 2943 + longTransfer * 0.5,
+  };
+
+  function drawCarTopDown(ctx, cx, cy, loads, heading, titleText) {
+    const hw = 55, hl = 80;
+    ctx.fillStyle = 'rgba(255,217,102,0.2)';
+    ctx.strokeStyle = '#999'; ctx.lineWidth = 1.5;
+    ctx.fillRect(cx - hw, cy - hl, hw * 2, hl * 2);
+    ctx.strokeRect(cx - hw, cy - hl, hw * 2, hl * 2);
+
+    // Front marker
+    ctx.strokeStyle = '#e63946'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(cx - hw + 4, cy - hl); ctx.lineTo(cx + hw - 4, cy - hl); ctx.stroke();
+
+    // Acceleration arrow (forward = up in top-down view)
+    if (heading !== 0) {
+      ctx.strokeStyle = '#2a9d8f'; ctx.lineWidth = 2;
+      ctx.fillStyle = '#2a9d8f';
+      ctx.beginPath(); ctx.moveTo(cx, cy + hl + 12); ctx.lineTo(cx, cy + hl + 42); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 6, cy + hl + 30); ctx.lineTo(cx, cy + hl + 12); ctx.lineTo(cx + 6, cy + hl + 30); ctx.closePath(); ctx.fill();
+      ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#2a9d8f';
+      ctx.fillText('0.5g', cx, cy + hl + 58);
+    }
+
+    const positions = { FL: [cx - hw, cy - hl], FR: [cx + hw, cy - hl], RL: [cx - hw, cy + hl], RR: [cx + hw, cy + hl] };
+    const maxLoad = 3500;
+    Object.entries(positions).forEach(([name, [px, py]]) => {
+      const load = loads[name];
+      const radius = 10 + (load / maxLoad) * 22;
+      const hue = load > 2943 ? '#e63946' : '#457b9d';
+      ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.fillStyle = hue + '55'; ctx.strokeStyle = hue; ctx.lineWidth = 2;
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#222'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(Math.round(load) + ' N', px, py + 3);
+    });
+
+    // Title
+    ctx.fillStyle = '#333'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(titleText, cx, cy - hl - 14);
+  }
+
+  drawCarTopDown(ctx, w * 0.28, h * 0.52, staticLoads, 0, 'Static (equal load)');
+  drawCarTopDown(ctx, w * 0.72, h * 0.52, dynamicLoads, 1, 'Accelerating forward (+0.5g)');
+
+  // Divider
+  ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
+  ctx.setLineDash([5, 5]);
+  ctx.beginPath(); ctx.moveTo(w / 2, 50); ctx.lineTo(w / 2, h - 20); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Formula
+  ctx.fillStyle = '#555'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Transfer = mass × accel × CoG_height / wheelbase', w / 2, h - 12);
+}
+
+// ===================================================================
+// BUILD PAGE
+// ===================================================================
+const grid = document.getElementById('diagramGrid');
+const canvasMap = {};
+
+DIAGRAMS.forEach(diagram => {
+  const card = document.createElement('div');
+  card.className = 'diagram-card';
+  card.innerHTML = `
+    <h2>${diagram.title}</h2>
+    <canvas id="canvas_${diagram.id}" width="${CANVAS_W}" height="${CANVAS_H}"></canvas>
+    <div class="card-footer">
+      <span>${CANVAS_W} × ${CANVAS_H} px</span>
+      <button data-id="${diagram.id}">⬇ Save PNG</button>
+    </div>
+  `;
+  grid.appendChild(card);
+  const canvas = card.querySelector('canvas');
+  canvasMap[diagram.id] = canvas;
+  const ctx = canvas.getContext('2d');
+  diagram.draw(ctx, CANVAS_W, CANVAS_H);
+});
+
+// Per-card download
+grid.addEventListener('click', (e) => {
+  if (e.target.dataset.id) {
+    downloadCanvas(canvasMap[e.target.dataset.id], e.target.dataset.id + '.png');
+  }
+});
+
+// Download all
+document.getElementById('btnDownloadAll').addEventListener('click', () => {
+  DIAGRAMS.forEach((d, i) => {
+    setTimeout(() => downloadCanvas(canvasMap[d.id], d.id + '.png'), i * 120);
+  });
+});
+
+// Redraw
+document.getElementById('btnRedraw').addEventListener('click', () => {
+  DIAGRAMS.forEach(diagram => {
+    const canvas = canvasMap[diagram.id];
+    diagram.draw(canvas.getContext('2d'), CANVAS_W, CANVAS_H);
+  });
+});
+
+function downloadCanvas(canvas, filename) {
+  const link = document.createElement('a');
+  link.href = canvas.toDataURL('image/png');
+  link.download = filename;
+  link.click();
+}
+</script>
+</body>
+</html>
