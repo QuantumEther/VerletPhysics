@@ -252,21 +252,27 @@ function runPhysicsStep(dt) {
   const netForceY  = tireForces.forceY + dragForces.forceY + brakeForces.forceY;
   const netTorque  = tireForces.torque;
 
+  // === PHASE 2b YAW DAMPING ===
+  // Apply counter-torque proportional to angular velocity.
+  // This opposes spinning, allowing tuning between arcade drifting and stable handling.
+  // Formula: τ_damp = -yawDamping × I × ω
+  const massKg = state.params.carMassKg;
+  const momentOfInertia = massKg * (CAR_HALF_LENGTH * CAR_HALF_LENGTH +
+                                    CAR_HALF_WIDTH  * CAR_HALF_WIDTH) / 3;
+  const yawDampingTorque = -state.params.yawDamping * momentOfInertia * state.body.angularVelocity;
+  const dampenedNetTorque = netTorque + yawDampingTorque;
+
   // === PHASE 2a DIAGNOSTIC LOGGING ===
   // Log yaw dynamics to understand rotational behavior.
   if (Math.abs(netTorque) > 0.1 || Math.abs(state.body.angularVelocity) > 0.01) {
-    console.log(`[YAW] torque=${netTorque.toFixed(1)} N·m | angularVel=${state.body.angularVelocity.toFixed(4)} rad/s | lateralAccel=${state.body.lateralAccel.toFixed(2)} m/s²`);
+    console.log(`[YAW] torque=${netTorque.toFixed(1)} N·m | damping=${yawDampingTorque.toFixed(1)} N·m | total=${dampenedNetTorque.toFixed(1)} N·m | angularVel=${state.body.angularVelocity.toFixed(4)} rad/s | lateralAccel=${state.body.lateralAccel.toFixed(2)} m/s²`);
   }
 
   // 9. Convert to accelerations (F = ma → a = F/m; τ = Iα → α = τ/I).
-  // Moment of inertia computed from the current slider mass so it tracks
-  // the mass slider correctly (the frozen constant uses the default mass only).
-  const massKg            = state.params.carMassKg;
-  const momentOfInertia   = massKg * (CAR_HALF_LENGTH * CAR_HALF_LENGTH +
-                                      CAR_HALF_WIDTH  * CAR_HALF_WIDTH) / 3;
+  // Note: massKg and momentOfInertia already computed above in yaw damping section.
   const netLinearAccelX   = netForceX / massKg;
   const netLinearAccelY   = netForceY / massKg;
-  const netAngularAccel   = netTorque  / momentOfInertia;
+  const netAngularAccel   = dampenedNetTorque / momentOfInertia;
 
   // 10. Verlet integration: advance all four wheel positions using the
   //     computed linear and angular accelerations.

@@ -135,6 +135,12 @@
           <input type="range" id="stallResistance" min="0.0" max="1.0" value="0.5" step="0.05">
           <span class="slider-value" id="stallResistanceValue">0.50</span>
         </div>
+        <div class="slider-row">
+          <span class="slider-label">Yaw Damping</span>
+          <!-- Counter-torque opposing spin: lower = arcade drifting, higher = stable handling -->
+          <input type="range" id="yawDamping" min="0.001" max="0.1" value="0.02" step="0.001">
+          <span class="slider-value" id="yawDampingValue">0.020</span>
+        </div>
         <button id="engineToggle" style="width:100%;padding:8px;margin-top:10px;font-family:'JetBrains Mono',monospace;font-size:0.8rem;font-weight:700;letter-spacing:1px;background:#2ecc71;color:#111;border:2px solid #2ecc71;border-radius:8px;cursor:pointer">Engine ON</button>
       </div>
 

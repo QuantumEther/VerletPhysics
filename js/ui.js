@@ -158,6 +158,7 @@ export function initSliders() {
   bind('cogHeight',             'cogHeight',             parseFloat1, fmt2);
   bind('bounciness',            'bounciness',            parseFloat1, fmt2);
   bind('stallResistance',       'stallResistance',       parseFloat1, fmt2);
+  bind('yawDamping',            'yawDamping',            parseFloat1, fmt3);
 
   // ---- Clutch ----
   bind('clutchBitePoint',  'clutchBitePoint',  parseFloat1, fmt2);

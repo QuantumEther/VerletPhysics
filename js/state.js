@@ -39,6 +39,7 @@ import {
   CHECKERBOARD_TILE_SIZE_PX,
   MAX_TRAIL_ARROWS,
   GEAR_RATIOS,
+  DEFAULT_YAW_DAMPING,
 } from './constants.js';
 
 // =============================================================
@@ -202,6 +203,7 @@ const state = {
     cogHeight:               COG_HEIGHT,        // metres (was cogHeightPx in pixels)
     bounciness:              DEFAULT_BOUNCINESS,
     stallResistance:         DEFAULT_STALL_RESISTANCE,
+    yawDamping:              DEFAULT_YAW_DAMPING, // N·m·s/rad; opposes angular velocity
 
     trailSpawnInterval: 0.08,   // seconds between arrow spawns
     trailLifespan:      2.0,    // seconds until an arrow fades
