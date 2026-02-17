@@ -203,7 +203,7 @@ const state = {
 
     clutchBitePoint:  0.35, // synced with CLUTCH_BITE_POINT
     clutchBiteRange:  0.20, // synced with CLUTCH_BITE_RANGE
-    clutchBiteCurve:  2.5,  // synced with CLUTCH_BITE_CURVE
+    clutchBiteCurve:  1.8,  // synced with CLUTCH_BITE_CURVE
     clutchEngageTime: 0.30, // synced with CLUTCH_ENGAGE_TIME
   },
 

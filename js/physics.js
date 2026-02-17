@@ -399,7 +399,7 @@ export function updateEngine(dt) {
     const wheelRpm        = (vehicleSpeed * 60) / (TAU * WHEEL_RADIUS_PX);
     const engineRpmFromWheel = wheelRpm * Math.abs(gearRatio) * FINAL_DRIVE_RATIO;
 
-    engine.rpm = Math.max(IDLE_RPM, engineRpmFromWheel);
+    engine.rpm = engineRpmFromWheel;
 
     // Hard redline limiter: if RPM would exceed redline, the engine cuts fuel.
     if (engine.rpm > REDLINE_RPM) {

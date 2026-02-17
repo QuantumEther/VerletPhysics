@@ -85,7 +85,7 @@ export const TORQUE_PEAK_RPM = 4500; // RPM at which parabolic torque curve peak
 // If RPM drops below this while the clutch is in the slip/engaged zone
 // and the car is nearly stationary, the engine stalls.
 // Lowering makes the car harder to stall; raising makes it easier.
-export const STALL_RPM = 400;
+export const STALL_RPM = 600;
 
 // Peak engine torque in Newton-metres (pixel-scaled).
 // Tuned so the car reaches ≈ 200 km/h in 6th gear at redline with default mass.
@@ -142,13 +142,13 @@ export const WHEEL_RADIUS_PX = 24;
 // -------------------------------------------------------------
 export const CLUTCH_BITE_POINT  = 0.35; // pedal position where bite begins
 export const CLUTCH_BITE_RANGE  = 0.20; // width of slip zone
-export const CLUTCH_BITE_CURVE  = 2.5;  // power exponent; higher = grabbier
+export const CLUTCH_BITE_CURVE  = 1.8;  // power exponent; higher = grabbier
 export const CLUTCH_ENGAGE_TIME = 0.30; // seconds for pedal to travel full range
 
 // How hard the engine fights to stay alive during engagement (0–1).
 // 0 = stalls very easily; 1 = nearly impossible to stall.
-// At 0.5 the engine stalls if you dump the clutch at idle.
-export const DEFAULT_STALL_RESISTANCE = 0.5;
+// At 0.7 the engine can handle smooth engagement from idle.
+export const DEFAULT_STALL_RESISTANCE = 0.7;
 
 // -------------------------------------------------------------
 // TIRE MODEL (Pacejka simplified, E = 0)
