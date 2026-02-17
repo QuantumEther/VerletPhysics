@@ -90,7 +90,7 @@ export const STALL_RPM = 600;
 // Peak engine torque in Newton-metres (pixel-scaled).
 // Tuned so the car reaches ≈ 200 km/h in 6th gear at redline with default mass.
 // Increasing this makes all gears more aggressive.
-export const PEAK_ENGINE_TORQUE_NM = 280;
+export const PEAK_ENGINE_TORQUE_NM = 2800;
 
 // Braking deceleration when the brake pedal is held (px/s²).
 // 800 px/s² ≈ 8 m/s² ≈ 0.82 g, which is realistic for a road car.
@@ -98,7 +98,8 @@ export const BRAKE_FORCE = 800;
 
 // Small forward force at idle so the car creeps without throttle input.
 // Mimics the idle-creep behaviour of a real manual car with clutch just released.
-export const IDLE_CREEP_FORCE = 20; // px/s²
+// At 200 N this slightly exceeds rolling drag (≈118 N) so the car visibly creeps.
+export const IDLE_CREEP_FORCE = 200; // N
 
 // -------------------------------------------------------------
 // DRIVETRAIN
@@ -175,8 +176,13 @@ export const DEFAULT_TIRE_FRICTION_COEFF = 1.0;
 // DRAG
 // -------------------------------------------------------------
 // Rolling resistance coefficient (dimensionless).
-// Force = coeff × normal load. Typical value for a car on tarmac ≈ 0.015.
-export const DEFAULT_ROLLING_RESISTANCE_COEFF = 0.015;
+// Force = coeff × normal load.
+// NOTE: GRAVITY_PX_PER_SEC2 = 9.8 × PIXELS_PER_METER = 98 px/s², which is
+// 10× larger than real-world m/s² gravity. This amplifies normal loads by 10×,
+// so the coefficient must be proportionally smaller than the real-world 0.010–0.020
+// range to keep rolling drag in balance with engine drive force.
+// At 0.001: rollingDrag = 0.001 × 117 600 N ≈ 118 N — less than idle drive (≈184 N).
+export const DEFAULT_ROLLING_RESISTANCE_COEFF = 0.001;
 
 // Aerodynamic drag coefficient (units: px⁻¹, applied as F = coeff × speed²).
 // Tuned so that top speed in 6th gear at redline ≈ 200 km/h.

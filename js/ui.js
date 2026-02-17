@@ -152,7 +152,7 @@ export function initSliders() {
 
   // ---- Car physics ----
   bind('carMassKg',             'carMassKg',            parseFloat1, fmtInt);
-  bind('rollingResistanceCoeff','rollingResistanceCoeff',parseFloat1, fmt4);
+  bind('rollingResistanceCoeff','rollingResistanceCoeff',parseFloat1, fmt5);
   bind('aeroDragCoeff',         'aeroDragCoeff',         parseFloat1, fmt5);
   bind('tireFrictionCoeff',     'tireFrictionCoeff',     parseFloat1, fmt2);
   bind('cogHeightPx',           'cogHeightPx',           parseFloat1, fmt1);
