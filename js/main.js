@@ -205,6 +205,13 @@ function mainLoop(timestampMilliseconds) {
     state.loop.accumulator -= physicsFixedDt;
   }
 
+  // === PHASE 2a DIAGNOSTIC LOGGING ===
+  // Log angular velocity per animation frame to track yaw persistence.
+  if (Math.abs(state.body.angularVelocity) > 0.01) {
+    const speedKph = state.body.speed / KPH_TO_MPS;
+    console.log(`[ANGVEL] angularVel=${state.body.angularVelocity.toFixed(4)} rad/s | speed=${speedKph.toFixed(1)} km/h | heading=${(state.body.heading * 180 / Math.PI).toFixed(0)}°`);
+  }
+
   // Render once per animation frame (no interpolation).
   renderFrame();
 }
@@ -244,6 +251,12 @@ function runPhysicsStep(dt) {
   const netForceX  = tireForces.forceX + dragForces.forceX + brakeForces.forceX;
   const netForceY  = tireForces.forceY + dragForces.forceY + brakeForces.forceY;
   const netTorque  = tireForces.torque;
+
+  // === PHASE 2a DIAGNOSTIC LOGGING ===
+  // Log yaw dynamics to understand rotational behavior.
+  if (Math.abs(netTorque) > 0.1 || Math.abs(state.body.angularVelocity) > 0.01) {
+    console.log(`[YAW] torque=${netTorque.toFixed(1)} N·m | angularVel=${state.body.angularVelocity.toFixed(4)} rad/s | lateralAccel=${state.body.lateralAccel.toFixed(2)} m/s²`);
+  }
 
   // 9. Convert to accelerations (F = ma → a = F/m; τ = Iα → α = τ/I).
   // Moment of inertia computed from the current slider mass so it tracks

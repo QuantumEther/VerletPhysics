@@ -616,6 +616,14 @@ export function computeTireForces() {
     // Torque contribution: 2D cross product of arm and force vectors.
     // τ = armX × forceY - armY × forceX (Z component only).
     netTorque += armX * wheelForceY - armY * wheelForceX;
+
+    // === PHASE 2a DIAGNOSTIC LOGGING ===
+    // Log slip angles to understand tire saturation and lateral force generation.
+    if (Math.abs(slipAngle) > 0.01) { // Only log if there's meaningful slip
+      const slipAngleDeg = slipAngle * (180 / Math.PI);
+      const scaledLateralForce = lateralForceMag * frictionScale;
+      console.log(`[SLIP] ${name}: angle=${slipAngleDeg.toFixed(1)}° | lateralSpeed=${wheelLateralSpeed.toFixed(2)} m/s | normalLoad=${normalLoad.toFixed(0)} N | lateralForce=${scaledLateralForce.toFixed(0)} N`);
+    }
   }
 
   return { forceX: netForceX, forceY: netForceY, torque: netTorque };
