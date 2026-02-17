@@ -576,10 +576,17 @@ export function computeTireForces() {
     const wheelLateralSpeed      = dot(wheelVelX, wheelVelY, wheelRightX,   wheelRightY);
 
     // Slip angle: angle between where the wheel is pointed and where it is going.
-    // At zero speed there is no meaningful slip angle; suppress below a threshold.
-    const slipAngle = Math.abs(speedMagnitude) > 0.1
-      ? Math.atan2(wheelLateralSpeed, Math.abs(wheelLongitudinalSpeed))
-      : 0;
+    // === PHASE 3b: SLIP SUPPRESSION FIX ===
+    // OLD APPROACH: Suppressed slip angles below 0.1 m/s speed threshold, preventing
+    // low-speed lateral forces that would help car settle from residual spin.
+    // NEW APPROACH: Denominator clamping (production SDK pattern). Always compute slip
+    // angle, but clamp the longitudinal speed denominator to avoid singularities and
+    // ensure meaningful slip model across all speeds.
+    const vLong = wheelLongitudinalSpeed;
+    const vLat = wheelLateralSpeed;
+    const minSlipDenom = 0.5;  // m/s — ensures slip angle defined even at standstill
+    const slipDenom = Math.max(Math.abs(vLong), minSlipDenom);
+    const slipAngle = Math.atan2(vLat, slipDenom);
 
     // Lateral force (perpendicular to wheel heading): Pacejka.
     // Opposes the lateral velocity — this is what steers the car.
@@ -653,26 +660,29 @@ export function computeTireForces() {
 // Aerodynamic drag: scales with velocity squared (doubles at double speed = 4× drag).
 //
 // Returns: { forceX, forceY }
+// === PHASE 3b: DRAG CUTOFF FIX ===
+// REMOVED: The `body.speed < 0.05` cutoff that created a dead zone where
+// the car would coast to 0.049 m/s and stick there forever. The low-speed
+// dead zone prevented settling. Now we always compute drag with safe
+// division-by-zero handling.
 export function computeDragForces() {
   const body   = state.body;
   const params = state.params;
-
-  if (body.speed < 0.05) {
-    return { forceX: 0, forceY: 0 };
-  }
 
   const normalForce         = params.carMassKg * GRAVITY;
   const rollingResistance   = params.rollingResistanceCoeff * normalForce;
   const aeroDrag            = params.aeroDragCoeff * body.speed * body.speed;
   const totalDragMagnitude  = rollingResistance + aeroDrag;
 
-  // Direction: opposite to velocity.
-  const invSpeed = 1 / body.speed;
-
-  return {
-    forceX: -body.velocityX * invSpeed * totalDragMagnitude,
-    forceY: -body.velocityY * invSpeed * totalDragMagnitude,
-  };
+  // Direction: opposite to velocity. Clamp speed to avoid division by zero.
+  if (body.speed > 0.001) {
+    const invSpeed = 1 / body.speed;
+    return {
+      forceX: -body.velocityX * invSpeed * totalDragMagnitude,
+      forceY: -body.velocityY * invSpeed * totalDragMagnitude,
+    };
+  }
+  return { forceX: 0, forceY: 0 };
 }
 
 
@@ -982,6 +992,39 @@ export function handleGearChange(newGear) {
 
   engine.previousGear = engine.currentGear;
   engine.currentGear  = newGear;
+}
+
+
+// =============================================================
+// SLEEP RULE (Phase 3b)
+// =============================================================
+
+// Applies a sleep/settle rule to prevent micro-drifting at very low speeds.
+// When the car is nearly stationary and not being controlled, snap the Verlet
+// history to zero velocity so the car comes to a complete, imperceptible stop.
+// This fixes the "unending drift" problem where the car coasts to 0.049 m/s
+// and stays there forever due to low-speed drag cutoffs.
+export function applySleepIfNeeded() {
+  const noInput = !state.input.throttleKeyHeld &&
+                  !state.input.brakeKeyHeld &&
+                  !state.input.mouseThrottleActive;
+
+  const v = state.body.speed;
+  const w = Math.abs(state.body.angularVelocity);
+
+  const vSleep = 0.02;   // m/s (2 cm/s — imperceptible to player)
+  const wSleep = 0.02;   // rad/s
+
+  // When speed and yaw are below sleep thresholds and there's no input,
+  // snap all Verlet history to current position, zeroing implicit velocity.
+  if (noInput && v < vSleep && w < wSleep) {
+    for (const wheel of Object.values(state.wheels)) {
+      wheel.prevX = wheel.x;
+      wheel.prevY = wheel.y;
+    }
+    // Also zero body rotational velocity by snapping heading history
+    state.body.prevHeading = state.body.heading;
+  }
 }
 
 

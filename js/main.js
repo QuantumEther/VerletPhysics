@@ -7,18 +7,18 @@
 // PHYSICS STEP ORDER (enforced here, documented in physics.js):
 //   1.  updateSteering(dt)
 //   2.  updateEngine(dt)
-//   3.  computeBodyDerivedState(dt)
-//   4.  computeWeightTransfer()
-//   5.  computeTireForces()
-//   6.  computeDragForces()
-//   7.  computeBrakeForce()
-//   8.  combine into net linear + angular acceleration
-//   9.  verletIntegrateAllPoints(dt, ...)
-//  10.  solveRigidBodyConstraints()
-//  11.  clampParticleDisplacements()
-//  12.  handleBoundaryCollisions()
-//  13.  solveRigidBodyConstraints()  (again after collision)
-//  14.  computeBodyDerivedState(dt)  (recompute for camera and render)
+//   3.  computeWeightTransfer()   [PHASE 3a: removed pre-force computeBodyDerivedState]
+//   4.  computeTireForces()
+//   5.  computeDragForces()
+//   6.  computeBrakeForce()
+//   7.  combine into net linear + angular acceleration
+//   8.  verletIntegrateAllPoints(dt, ...)
+//   9.  solveRigidBodyConstraints()
+//  10.  clampParticleDisplacements()
+//  11.  handleBoundaryCollisions()
+//  12.  solveRigidBodyConstraints()  (again after collision)
+//  13.  computeBodyDerivedState(dt)  (recompute for camera and render)
+//  14.  applySleepIfNeeded()         [PHASE 3b: new sleep rule]
 //  15.  updateCamera(dt)
 //  16.  trail spawn / update
 //  17.  updateEngineSound(...)       (no-op stub)
@@ -63,6 +63,7 @@ import {
   handleBoundaryCollisions,
   updateCamera,
   updateEngineSound,
+  applySleepIfNeeded,
 } from './physics.js';
 
 import {
@@ -233,13 +234,16 @@ function runPhysicsStep(dt) {
   //    checks for stall.
   updateEngine(dt);
 
-  // 3. Derive body state: centre, heading, velocity, angular velocity,
-  //    longitudinal and lateral accelerations. Must run before anything
-  //    that reads from state.body.
-  computeBodyDerivedState(dt);
+  // === PHASE 3a: DERIVED-STATE BUG FIX ===
+  // REMOVED: Pre-force computeBodyDerivedState(dt) call that was zeroing
+  // angularVelocity and acceleration before force computation. This was
+  // a critical bug: it made yaw damping ineffective (used ω=0) and broke
+  // slip angle calculations (which use ω×r). Now we use ω from the END
+  // of the previous step, ensuring yaw damping has real angular velocity
+  // to work with. See Deep Research Report: "Derived-state reset bug".
 
-  // 4. Weight transfer: distributes normal load to each wheel based on
-  //    the body's longitudinal and lateral accelerations.
+  // 3. Weight transfer: distributes normal load to each wheel based on
+  //    the body's longitudinal and lateral accelerations (computed at end of previous step).
   computeWeightTransfer();
 
   // 5–7. Compute all forces.
@@ -299,6 +303,12 @@ function runPhysicsStep(dt) {
   // 15. Recompute derived state after integration and collision resolution.
   //     This ensures the camera and renderer read the final, correct values.
   computeBodyDerivedState(dt);
+
+  // === PHASE 3b: SLEEP RULE ===
+  // Apply sleep/settle rule to prevent micro-drifting at very low speeds.
+  // When speed and yaw rate are below thresholds with no input, snap Verlet
+  // history to zero velocity for a complete imperceptible stop.
+  applySleepIfNeeded();
 
   // 16. Camera: spring-damper follow of body centre, speed-based zoom.
   updateCamera(dt);

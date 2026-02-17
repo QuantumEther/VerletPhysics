@@ -34,10 +34,15 @@ export const KPH_TO_MPS = 1000 / 3600; // ≈ 0.2778
 // The car is represented by four Verlet particles at wheel positions.
 // Half-width and half-length are measured from the car's centre of mass.
 // These determine rest distances for the six rigid constraints.
-// At PIXELS_PER_METER = 10:  2m → 20px, 4m → 40px on screen.
+// At PIXELS_PER_METER = 10:  0.8m → 8px, 1.5m → 15px on screen.
+// === PHASE 3c: CAR DIMENSION RESCALING ===
+// OLD: 2.0m width, 4.0m length (tanker truck proportions, 8m × 4m wheelbase)
+// NEW: 0.8m width, 1.5m length (realistic sports car: ~3m wheelbase, ~1.6m track)
+// Moment of inertia automatically recalculates from updated dimensions.
+// Old I ≈ 8000 kg·m²; New I ≈ 1156 kg·m² (car now feels more responsive to torque).
 // -------------------------------------------------------------
-export const CAR_HALF_WIDTH  = 2.0; // m
-export const CAR_HALF_LENGTH = 4.0; // m
+export const CAR_HALF_WIDTH  = 0.8; // m
+export const CAR_HALF_LENGTH = 1.5; // m
 
 // Derived rest distances for all six rigid distance constraints (metres).
 export const CONSTRAINT_AXLE_WIDTH  = CAR_HALF_WIDTH  * 2; // 4.0 m
@@ -46,8 +51,11 @@ export const CONSTRAINT_DIAGONAL    =
   Math.sqrt(CONSTRAINT_AXLE_WIDTH ** 2 + CONSTRAINT_SIDE_LENGTH ** 2); // ≈ 8.944 m
 
 // Number of Jakobsen constraint solver iterations per physics sub-step.
-// 4 is the minimum for a rigid rectangle; 6 gives a noticeably stiffer body.
-export const CONSTRAINT_ITERATIONS = 6;
+// === PHASE 3c: CONSTRAINT ITERATIONS INCREASE ===
+// OLD: 6 iterations (loose, allows jitter in rigid body)
+// NEW: 12 iterations (stiff, better weight transfer accuracy, reduces jitter)
+// Higher iterations = tighter constraint solving = better stability but more CPU
+export const CONSTRAINT_ITERATIONS = 12;
 
 // -------------------------------------------------------------
 // PHYSICS
@@ -100,11 +108,13 @@ export const TORQUE_PEAK_RPM = 4500; // RPM at which parabolic torque curve peak
 export const STALL_RPM = 600;
 
 // Peak engine torque in Newton-metres.
-// 2800 N·m is hypercar territory. A normal family car ≈ 200–350 N·m.
+// === PHASE 3c: ENGINE TORQUE RESCALING ===
+// OLD: 2800 N·m (hypercar territory, unrealistic for base car)
+// NEW: 350 N·m (realistic road car, mid-range sports car level)
 // Tune via the peakEngineTorqueNm slider.
 // With WHEEL_RADIUS = 0.35 m, 1st gear full throttle peak:
-//   driveForce = 2800 × 3.5 × 4.1 / 0.35 ≈ 117,600 N  (~9.8 g)
-export const PEAK_ENGINE_TORQUE_NM = 2800;
+//   driveForce = 350 × 3.5 × 4.1 / 0.35 ≈ 14,350 N  (~1.2 g before friction clamp)
+export const PEAK_ENGINE_TORQUE_NM = 350;
 
 // Braking force when the brake pedal is held (Newtons).
 // 9810 N / 1200 kg ≈ 8.2 m/s² ≈ 0.83 g — realistic for a road car.

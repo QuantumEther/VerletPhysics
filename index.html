@@ -82,9 +82,12 @@
         <h3>⚡ Simulation</h3>
         <div class="slider-row">
           <span class="slider-label">Sim FPS</span>
-          <!-- Snapped to nearest 10Hz in ui.js; range 10–120 -->
-          <input type="range" id="simulationFps" min="10" max="120" value="60" step="10">
-          <span class="slider-value" id="simulationFpsValue">60</span>
+          <!-- === PHASE 3c: SIMULATION FPS DEFAULT INCREASE ===
+               Snapped to nearest 10Hz in ui.js; range 10–120
+               OLD default: 60 Hz (acceptable, but loose constraint solving)
+               NEW default: 90 Hz (better constraint enforcement, smoother physics) -->
+          <input type="range" id="simulationFps" min="10" max="120" value="90" step="10">
+          <span class="slider-value" id="simulationFpsValue">90</span>
         </div>
         <div class="slider-row">
           <span class="slider-label">Time Scale</span>
@@ -267,8 +270,11 @@
         <h3>🔧 Engine &amp; Drivetrain</h3>
         <div class="slider-row">
           <span class="slider-label">Peak Torque (Nm)</span>
-          <input type="range" id="peakEngineTorqueNm" min="100" max="5000" value="2800" step="50">
-          <span class="slider-value" id="peakEngineTorqueNmValue">2800</span>
+          <!-- === PHASE 3c: ENGINE TORQUE RESCALING ===
+               OLD range: 100–5000 value=2800 (hypercar territory)
+               NEW range: 50–2000 value=350 (realistic road car) -->
+          <input type="range" id="peakEngineTorqueNm" min="50" max="2000" value="350" step="10">
+          <span class="slider-value" id="peakEngineTorqueNmValue">350</span>
         </div>
         <div class="slider-row">
           <span class="slider-label">Idle RPM</span>
