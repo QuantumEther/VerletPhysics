@@ -1,169 +1,212 @@
 // =============================================================
 // INPUT — keyboard and mouse event handlers
 // =============================================================
-// Writes to: state.input, state.steering, state.engine (via physics)
-// Reads from: constants (key sets, steering geometry)
+// Writes to: state.input, state.steering (via mouse drag)
+// Reads from: constants (steering geometry, key definitions)
+// Calls: handleGearChange() from physics.js when a gear key is pressed
 //
-// Mouse controls:
-//   Right-click drag horizontal → steering wheel angle
-//   Left-click drag vertical   → analog throttle (0–1)
+// Control scheme:
+//   D key:            full throttle (binary; mouse drag gives analog)
+//   S key:            brake
+//   A key:            clutch pedal to floor (hold to disengage, release to engage)
+//   Right-click drag: steering wheel (horizontal drag)
+//   Left-click drag:  analog throttle (vertical drag, up = more throttle)
+//   Shift+left-click: also steering (alternative for one-button mice)
 //
-// Keyboard controls:
-//   D = full throttle (binary fallback when mouse not used)
-//   S = brake
-//   A = clutch
-//   Numpad = gear selection (only while clutch held)
+//   Gear changes (while A is held or at any time):
+//     Numpad 7 → 1st gear
+//     Numpad 1 → 2nd gear
+//     Numpad 8 → 3rd gear
+//     Numpad 2 → 4th gear
+//     Numpad 9 → 5th gear
+//     Numpad 3 → 6th gear
+//     Numpad 4 / 5 / 6 → Neutral
+//     Q + Numpad 1 → Reverse
 // =============================================================
 
 import state from './state.js';
 import { handleGearChange } from './physics.js';
 import {
-  GAME_KEYS,
-  MAX_STEERING_ANGLE,
-  STEERING_DRAG_RANGE
+  STEERING_DRAG_RANGE_PX,
+  MAX_FRONT_WHEEL_ANGLE_RAD,
 } from './constants.js';
 
-// Maximum vertical drag distance for full throttle (pixels)
-const THROTTLE_DRAG_RANGE = 120;
+
+// Keys that should have their default browser behaviour suppressed
+// (e.g., numpad keys scroll the page; space opens quick-find).
+const KEYS_TO_SUPPRESS_DEFAULT = new Set([
+  'KeyD', 'KeyS', 'KeyA', 'KeyQ',
+  'Numpad1', 'Numpad2', 'Numpad3',
+  'Numpad4', 'Numpad5', 'Numpad6',
+  'Numpad7', 'Numpad8', 'Numpad9',
+  'Space',
+]);
+
+// Maximum vertical drag distance for full throttle (pixels).
+// Dragging the mouse this many pixels upward from the drag start = 100% throttle.
+const THROTTLE_DRAG_RANGE_PX = 120;
+
+// Maximum visual steering wheel angle the HUD indicator can show (radians).
+// This is deliberately larger than MAX_FRONT_WHEEL_ANGLE_RAD to give an
+// arcade-style steering wheel with many turns of lock visible on screen.
+const MAX_VISUAL_WHEEL_ANGLE_RAD = Math.PI * 2.5;
 
 
-/**
- * Register all input event listeners.
- * Called once from main.js at startup.
- *
- * @param {HTMLCanvasElement} simCanvas - the simulation canvas
- */
-export function initInput(simCanvas) {
+// =============================================================
+// INITIALISATION
+// =============================================================
 
-  // ----- KEYBOARD: throttle, brake, clutch, gear selection -----
+// Attaches all keyboard and mouse event listeners to the simulation canvas.
+// Must be called once from main.js after the canvas is created.
+export function initInput(simulationCanvas) {
+  document.addEventListener('keydown',  onKeyDown);
+  document.addEventListener('keyup',    onKeyUp);
 
-  window.addEventListener('keydown', (event) => {
-    const key = event.key;
-    const code = event.code;
-    state.input.heldKeys[key] = true;
+  simulationCanvas.addEventListener('mousedown',  onMouseDown);
+  simulationCanvas.addEventListener('mousemove',  onMouseMove);
+  simulationCanvas.addEventListener('mouseup',    onMouseUp);
+  simulationCanvas.addEventListener('mouseleave', onMouseUp); // treat leaving as release
 
-    // Suppress browser defaults for game keys and numpad
-    if (GAME_KEYS.has(key) || key.startsWith('Arrow') || code.startsWith('Numpad')) {
-      event.preventDefault();
-    }
-
-    // Throttle = D (binary fallback; mouse drag gives analog control)
-    if (key === 'd' || key === 'D') state.input.throttlePressed = true;
-
-    // Brake = S
-    if (key === 's' || key === 'S') state.input.brakePressed = true;
-
-    // Clutch = A
-    if (key === 'a' || key === 'A') state.input.clutchPressed = true;
-
-    // Gear selection (only allowed while clutch is held)
-    if (state.input.clutchPressed) {
-      selectGear(code);
-    }
-  });
-
-  window.addEventListener('keyup', (event) => {
-    const key = event.key;
-    const code = event.code;
-    state.input.heldKeys[key] = false;
-
-    if (key === 'd' || key === 'D') state.input.throttlePressed = false;
-    if (key === 's' || key === 'S') state.input.brakePressed = false;
-    if (key === 'a' || key === 'A') state.input.clutchPressed = false;
-
-    if (GAME_KEYS.has(key) || key.startsWith('Arrow') || code.startsWith('Numpad')) {
-      event.preventDefault();
-    }
-  });
-
-
-  // ----- MOUSE: right-click drag = steering, left-click drag = throttle -----
-
-  simCanvas.addEventListener('mousedown', (event) => {
-    event.preventDefault();
-
-    if (event.button === 2 || event.button === 0 && event.shiftKey) {
-      // Right-click (or shift+left-click) = steering
-      state.steering.isDragging = true;
-      state.steering.dragStartX = event.clientX;
-    } else if (event.button === 0) {
-      // Left-click = analog throttle via vertical drag
-      state.input.mouseThrottleActive = true;
-      state.input.mouseThrottleDragStartY = event.clientY;
-      state.input.mouseThrottleAmount = 0.0;
-    }
-  });
-
-  // Prevent the right-click context menu on the canvas
-  simCanvas.addEventListener('contextmenu', (event) => {
-    event.preventDefault();
-  });
-
-  window.addEventListener('mousemove', (event) => {
-    // Steering drag (right-click or shift+left-click)
-    if (state.steering.isDragging) {
-      const deltaX = event.clientX - state.steering.dragStartX;
-      const clampedDelta = Math.max(-STEERING_DRAG_RANGE, Math.min(STEERING_DRAG_RANGE, deltaX));
-      state.steering.wheelAngle = (clampedDelta / STEERING_DRAG_RANGE) * MAX_STEERING_ANGLE;
-    }
-
-    // Analog throttle drag (left-click vertical)
-    if (state.input.mouseThrottleActive) {
-      // Dragging UP increases throttle, dragging DOWN decreases
-      const deltaY = state.input.mouseThrottleDragStartY - event.clientY;
-      const normalizedThrottle = Math.max(0, Math.min(1, deltaY / THROTTLE_DRAG_RANGE));
-      state.input.mouseThrottleAmount = normalizedThrottle;
-    }
-  });
-
-  window.addEventListener('mouseup', (event) => {
-    if (event.button === 2 || (event.button === 0 && state.steering.isDragging && !state.input.mouseThrottleActive)) {
-      state.steering.isDragging = false;
-    }
-    if (event.button === 0) {
-      state.input.mouseThrottleActive = false;
-      state.input.mouseThrottleAmount = 0.0;
-      // Also release steering if it was shift+left-click
-      if (state.steering.isDragging && !event.shiftKey) {
-        state.steering.isDragging = false;
-      }
-    }
-  });
+  // Prevent context menu on right-click so right-drag works without interruption.
+  simulationCanvas.addEventListener('contextmenu', (event) => event.preventDefault());
 }
 
 
-/**
- * Map numpad key codes to gear changes.
- * Now calls physics.handleGearChange() so the drivetrain can
- * react to the shift (rev-match blips, RPM adjustments, etc).
- *
- * Gear layout on numpad:
- *   7=1st  8=3rd  9=5th
- *   4=N    5=N    6=N
- *   1=2nd  2=4th  3=6th
- *   (Q+1 = Reverse)
- *
- * @param {string} code - the KeyboardEvent.code value
- */
-function selectGear(code) {
-  const held = state.input.heldKeys;
-  let newGear = null;
+// =============================================================
+// KEYBOARD EVENTS
+// =============================================================
 
-  switch (code) {
-    case 'Numpad7': newGear = '1'; break;
-    case 'Numpad1':
-      newGear = (held['q'] || held['Q']) ? 'R' : '2';
-      break;
-    case 'Numpad8': newGear = '3'; break;
-    case 'Numpad2': newGear = '4'; break;
-    case 'Numpad9': newGear = '5'; break;
-    case 'Numpad3': newGear = '6'; break;
-    case 'Numpad4':
-    case 'Numpad5':
-    case 'Numpad6': newGear = 'N'; break;
+function onKeyDown(event) {
+  if (KEYS_TO_SUPPRESS_DEFAULT.has(event.code)) {
+    event.preventDefault();
   }
 
-  if (newGear !== null) {
-    handleGearChange(newGear);
+  state.input.heldKeys[event.code] = true;
+
+  switch (event.code) {
+    case 'KeyD':
+      state.input.throttleKeyHeld = true;
+      break;
+
+    case 'KeyS':
+      state.input.brakeKeyHeld = true;
+      break;
+
+    case 'KeyA':
+      state.input.clutchKeyHeld = true;
+      break;
+
+    // Gear selection via numpad.
+    // The gear is selectable at any time; holding A first is conventional
+    // but not enforced — the engine/clutch model handles the consequence.
+    case 'Numpad7': selectGear('1', event); break;
+    case 'Numpad1': selectGear(isQHeld() ? 'R' : '2', event); break;
+    case 'Numpad8': selectGear('3', event); break;
+    case 'Numpad2': selectGear('4', event); break;
+    case 'Numpad9': selectGear('5', event); break;
+    case 'Numpad3': selectGear('6', event); break;
+    case 'Numpad4':
+    case 'Numpad5':
+    case 'Numpad6':
+      selectGear('N', event);
+      break;
+  }
+}
+
+function onKeyUp(event) {
+  delete state.input.heldKeys[event.code];
+
+  switch (event.code) {
+    case 'KeyD':
+      state.input.throttleKeyHeld = false;
+      break;
+
+    case 'KeyS':
+      state.input.brakeKeyHeld = false;
+      break;
+
+    case 'KeyA':
+      state.input.clutchKeyHeld = false;
+      break;
+  }
+}
+
+// Returns true if the Q key is currently held.
+// Q + Numpad1 selects Reverse.
+function isQHeld() {
+  return !!state.input.heldKeys['KeyQ'];
+}
+
+// Maps a gear letter to a call to handleGearChange in physics.js.
+// gear: 'N', 'R', '1' through '6'
+function selectGear(gear, _event) {
+  handleGearChange(gear);
+}
+
+
+// =============================================================
+// MOUSE EVENTS
+// =============================================================
+
+function onMouseDown(event) {
+  event.preventDefault();
+
+  // Right mouse button (button 2) OR Shift+Left button (button 0):
+  //   → steering drag
+  const isSteeringButton = event.button === 2 ||
+                           (event.button === 0 && event.shiftKey);
+
+  // Left mouse button without Shift: → throttle drag
+  const isThrottleButton = event.button === 0 && !event.shiftKey;
+
+  if (isSteeringButton) {
+    state.steering.isDragging    = true;
+    state.steering.dragStartX    = event.clientX;
+  }
+
+  if (isThrottleButton) {
+    state.input.mouseThrottleActive       = true;
+    state.input.mouseThrottleDragStartY   = event.clientY;
+  }
+}
+
+function onMouseMove(event) {
+  // Steering: horizontal drag from the drag start position maps to wheel angle.
+  // Full STEERING_DRAG_RANGE_PX pixels of drag = full visual steering lock.
+  if (state.steering.isDragging) {
+    const dragDelta     = event.clientX - state.steering.dragStartX;
+    const normalisedDrag = dragDelta / STEERING_DRAG_RANGE_PX; // can exceed ±1
+
+    // Visual wheel angle: larger range than physical tyre angle for feel.
+    state.steering.wheelAngle = normalisedDrag * MAX_VISUAL_WHEEL_ANGLE_RAD;
+    // Clamp so the visual doesn't spin forever with large drags.
+    const maxVisual = MAX_VISUAL_WHEEL_ANGLE_RAD;
+    if (state.steering.wheelAngle >  maxVisual) state.steering.wheelAngle =  maxVisual;
+    if (state.steering.wheelAngle < -maxVisual) state.steering.wheelAngle = -maxVisual;
+  }
+
+  // Throttle: vertical drag, up from start = more throttle.
+  // Canvas Y increases downward, so dragging up = negative delta = more throttle.
+  if (state.input.mouseThrottleActive) {
+    const dragDelta       = event.clientY - state.input.mouseThrottleDragStartY;
+    const normalisedDrag  = -dragDelta / THROTTLE_DRAG_RANGE_PX; // negative = up
+    state.input.mouseThrottleAmount = Math.max(0, Math.min(1, normalisedDrag));
+  }
+}
+
+function onMouseUp(event) {
+  if (event.button === 2 ||
+      (event.button === 0 && event.shiftKey) ||
+      event.type === 'mouseleave') {
+    state.steering.isDragging = false;
+  }
+
+  if (event.button === 0 || event.type === 'mouseleave') {
+    state.input.mouseThrottleActive = false;
+    // Do NOT reset mouseThrottleAmount here — let physics read the last value
+    // for one more frame; it will be suppressed because mouseThrottleActive=false.
+    // Actually, we do want to reset it so the car doesn't hold throttle if the
+    // user releases without dragging back to zero.
+    state.input.mouseThrottleAmount = 0;
   }
 }
