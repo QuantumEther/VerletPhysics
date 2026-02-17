@@ -1,155 +1,162 @@
 // =============================================================
 // TRAIL — velocity arrow spawning, aging, and rendering
 // =============================================================
-// Self-contained subsystem. The trail is a visual record of the
-// ball's recent velocity: arrows placed at the ball's position
-// with length/color/width proportional to speed at spawn time.
+// The trail is a visual record of the car's recent velocity.
+// Arrows are placed at the car's position each spawn interval,
+// oriented by the car's velocity vector, and sized by the car's speed.
 //
-// Each arrow captures its own lifespan at spawn time so that
-// changing the lifespan slider doesn't retroactively kill or
-// extend existing arrows.
+// Each arrow captures its lifespan at spawn time. Changing the slider
+// after arrows are spawned does not retroactively shorten or lengthen
+// existing arrows — they live out their snapshot lifespan.
+//
+// Arrows are stored in state.trail.arrows and rendered by drawTrailArrows()
+// which is called from renderer.js in the world-space (camera-transformed) pass.
 // =============================================================
 
 import state from './state.js';
 import {
-  ARROW_BASE_LENGTH,
-  REFERENCE_SPEED,
-  MAX_TRAIL_ARROWS
+  MAX_TRAIL_ARROWS,
+  TRAIL_ARROW_BASE_LENGTH_PX,
+  TRAIL_REFERENCE_SPEED_PX,
 } from './constants.js';
 
 
-/**
- * Attempt to spawn a trail arrow at the ball's current position.
- * Only spawns if the ball is moving above a minimum threshold
- * (prevents cluttering the canvas with zero-length arrows).
- */
+// =============================================================
+// SPAWN
+// =============================================================
+
+// Spawns a new trail arrow at the car's current position and velocity.
+// The arrow is only spawned if the car is moving (speed > 1 px/s).
+// If the arrow count exceeds the cap, the oldest arrow is removed first.
+// Caller is responsible for accumulating time and calling this at the
+// correct interval — see main.js.
 export function spawnTrailArrow() {
-  const velocityX = state.velocity.x;
-  const velocityY = state.velocity.y;
-  const speed = Math.hypot(velocityX, velocityY);
+  const body   = state.body;
+  const trail  = state.trail;
+  const params = state.params;
 
-  // Don't spawn arrows when nearly stationary
-  if (speed < 1.0) return;
+  if (body.speed < 1.0) return; // no point drawing arrows at rest
 
-  state.trail.arrows.push({
-    x: state.ball.x,
-    y: state.ball.y,
-    angle: Math.atan2(velocityY, velocityX),
-    speed: speed,
-    age: 0,
-    // Snapshot the current lifespan so slider changes
-    // don't retroactively affect existing arrows
-    lifespan: state.params.trailLifespan
-  });
-
-  // Cull oldest arrows if we exceed the cap
-  const arrows = state.trail.arrows;
-  if (arrows.length > MAX_TRAIL_ARROWS) {
-    arrows.splice(0, arrows.length - MAX_TRAIL_ARROWS);
+  // Cull oldest arrow if at cap, before pushing the new one.
+  if (trail.arrows.length >= MAX_TRAIL_ARROWS) {
+    trail.arrows.shift();
   }
+
+  // Snapshot the lifespan from params at spawn time.
+  // This means slider changes affect future arrows only, not existing ones.
+  const snapshotLifespan = params.trailLifespan;
+
+  trail.arrows.push({
+    x:        body.centerX,
+    y:        body.centerY,
+    angle:    Math.atan2(body.velocityY, body.velocityX), // world-space angle
+    speed:    body.speed,
+    age:      0,
+    lifespan: snapshotLifespan,
+  });
 }
 
 
-/**
- * Age all arrows by dt and remove expired ones.
- * Iterates in reverse so splice indices stay valid.
- *
- * @param {number} dt - physics timestep in seconds
- */
+// =============================================================
+// UPDATE
+// =============================================================
+
+// Ages all trail arrows by dt seconds and removes any that have expired.
+// Iterates backward to preserve array indices when splicing.
 export function updateTrailArrows(dt) {
   const arrows = state.trail.arrows;
-  for (let i = arrows.length - 1; i >= 0; i--) {
-    arrows[i].age += dt;
-    if (arrows[i].age >= arrows[i].lifespan) {
-      arrows.splice(i, 1);
+
+  for (let index = arrows.length - 1; index >= 0; index--) {
+    arrows[index].age += dt;
+    if (arrows[index].age >= arrows[index].lifespan) {
+      arrows.splice(index, 1);
     }
   }
 }
 
 
-/**
- * Map speed to a green → yellow → red colour string.
- * Green at 0 speed, yellow at REFERENCE_SPEED, red at 2×REFERENCE_SPEED.
- *
- * @param {number} speed - ball speed in px/s
- * @param {number} alpha - opacity 0–1
- * @returns {string} CSS rgba() colour
- */
-function speedToColor(speed, alpha) {
-  const normalizedSpeed = Math.min(speed / (REFERENCE_SPEED * 2), 1.0);
-  let red, green, blue;
+// =============================================================
+// RENDERING
+// =============================================================
 
-  if (normalizedSpeed < 0.5) {
-    // Green → Yellow transition
-    const t = normalizedSpeed * 2;
-    red   = Math.round(100 + 155 * t);
-    green = 255;
-    blue  = Math.round(100 - 20 * t);
-  } else {
-    // Yellow → Red transition
-    const t = (normalizedSpeed - 0.5) * 2;
-    red   = 255;
-    green = Math.round(255 - 175 * t);
-    blue  = Math.round(80 - 20 * t);
-  }
-
-  return `rgba(${red},${green},${blue},${alpha})`;
-}
-
-
-/**
- * Draw all living trail arrows on the given canvas context.
- * Each arrow has:
- *   - Length proportional to speed at spawn time
- *   - Line width proportional to speed
- *   - Colour from green→yellow→red gradient
- *   - Opacity that fades as the arrow ages (controlled by trailFade slider)
- *
- * @param {CanvasRenderingContext2D} ctx - simulation canvas context
- */
+// Draws all trail arrows onto the provided canvas context.
+// This function is called from renderer.js inside the camera transform,
+// so all coordinates are in world space.
 export function drawTrailArrows(ctx) {
-  const trailFade = state.params.trailFade;
+  const arrows = state.trail.arrows;
+  const params = state.params;
 
-  for (const arrow of state.trail.arrows) {
-    // Compute fade-based opacity
-    const lifeRatio = Math.max(0, 1 - arrow.age / arrow.lifespan);
-    const alpha = trailFade > 0
-      ? Math.min(1, lifeRatio + (1 - trailFade))
-      : 1;
+  for (const arrow of arrows) {
+    // Fade: opacity falls off as arrow ages.
+    // trailFade controls the exponent: higher = faster fade.
+    const normalizedAge = arrow.age / arrow.lifespan; // 0 at birth, 1 at death
+    const opacity = Math.pow(1.0 - normalizedAge, params.trailFade);
 
-    // Skip nearly-invisible arrows
-    if (alpha < 0.01) continue;
+    if (opacity < 0.01) continue; // skip nearly-invisible arrows
+
+    // Size: length and lineWidth scale with speed.
+    const speedRatio  = arrow.speed / TRAIL_REFERENCE_SPEED_PX;
+    const arrowLength = TRAIL_ARROW_BASE_LENGTH_PX * Math.max(0.4, speedRatio);
+    const lineWidth   = Math.max(1, 2 * Math.min(speedRatio, 2.0));
+
+    // Colour: green (slow) → yellow (reference speed) → red (fast).
+    const arrowColor  = speedToColor(arrow.speed, opacity);
 
     ctx.save();
     ctx.translate(arrow.x, arrow.y);
     ctx.rotate(arrow.angle);
 
-    // Scale line and arrowhead by speed
-    const speedRatio = Math.min(arrow.speed, REFERENCE_SPEED) / REFERENCE_SPEED;
-    const length = ARROW_BASE_LENGTH * speedRatio;
-    const lineWidth = 1.5 + 2.0 * speedRatio;
-    const color = speedToColor(arrow.speed, alpha);
-
-    // Arrow shaft
+    // Arrow shaft.
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.lineTo(length, 0);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-    ctx.lineCap = 'round';
+    ctx.lineTo(arrowLength, 0);
+    ctx.strokeStyle = arrowColor;
+    ctx.lineWidth   = lineWidth;
+    ctx.lineCap     = 'round';
     ctx.stroke();
 
-    // Arrowhead
-    const headLength = 6 + 4 * speedRatio;
-    const headWidth  = 3 + 2 * speedRatio;
-    ctx.fillStyle = color;
+    // Arrowhead triangle at the tip.
+    const headLength = arrowLength * 0.35;
+    const headWidth  = headLength  * 0.45;
     ctx.beginPath();
-    ctx.moveTo(length, 0);
-    ctx.lineTo(length - headLength, -headWidth);
-    ctx.lineTo(length - headLength,  headWidth);
+    ctx.moveTo(arrowLength, 0);
+    ctx.lineTo(arrowLength - headLength,  headWidth);
+    ctx.lineTo(arrowLength - headLength, -headWidth);
     ctx.closePath();
+    ctx.fillStyle = arrowColor;
     ctx.fill();
 
     ctx.restore();
   }
+}
+
+
+// =============================================================
+// COLOUR HELPER
+// =============================================================
+
+// Returns a CSS rgba() string that interpolates:
+//   green (0, 200, 100) at speed = 0
+//   yellow (255, 220, 0) at speed = TRAIL_REFERENCE_SPEED_PX
+//   red (255, 50, 50) at speed = 2 × TRAIL_REFERENCE_SPEED_PX
+function speedToColor(speed, alpha) {
+  const ref = TRAIL_REFERENCE_SPEED_PX;
+
+  let red, green, blue;
+
+  if (speed < ref) {
+    // Green → yellow
+    const fraction = speed / ref; // 0 at green, 1 at yellow
+    red   = Math.round(255 * fraction);
+    green = Math.round(200 + 20 * fraction); // 200 → 220
+    blue  = Math.round(100 * (1 - fraction));
+  } else {
+    // Yellow → red
+    const fraction = Math.min(1, (speed - ref) / ref); // 0 at yellow, 1 at red
+    red   = 255;
+    green = Math.round(220 * (1 - fraction) + 50 * fraction); // 220 → 50
+    blue  = Math.round(50  * fraction); // 0 → 50
+  }
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha.toFixed(3)})`;
 }

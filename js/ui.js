@@ -1,15 +1,14 @@
 // =============================================================
 // UI — slider binding, info bar updates, needle physics
 // =============================================================
-// Handles all DOM ↔ state synchronization.
+// Handles all DOM ↔ state synchronisation.
 //
-// Special slider behaviors:
-//   - Turn Rate: ranges [-5, +5] with 0 center (negative = inverted)
-//   - Spawn Interval: logarithmic mapping for fine control at low values
-//   - Sim FPS: snaps to nearest 10Hz tick
-//   - Temperature Rise/Fall: independent from throttle rise/fall
-//   - Camera and Motion Blur: new control panels
-//   - Map Width/Height: world boundary size
+// initSliders() connects every HTML slider to its state.params field.
+// updateInfoBar() refreshes the text displays in the info bar.
+// createNeedlePhysics() returns a spring-damper object for gauge needles.
+//
+// The needle physics model is separate from the physics simulation —
+// it only animates the visual gauge needle, never affects car behaviour.
 // =============================================================
 
 import state from './state.js';
@@ -19,244 +18,238 @@ import {
   NEEDLE_RISE_BOOST,
   NEEDLE_FALL_BOOST,
   NEEDLE_FLUTTER_THRESHOLD,
-  SPAWN_SLIDER_MIN,
-  SPAWN_SLIDER_MAX,
+  KPH_TO_PX_PER_SEC,
 } from './constants.js';
 
 
 // =============================================================
-// NEEDLE PHYSICS (spring-damped gauge needle animation)
+// NEEDLE PHYSICS
 // =============================================================
 
+// Creates and returns a needle physics instance.
+// The needle is a spring-damper system that smoothly tracks a target
+// normalised position [0, 1] without explicit velocity storage.
+//
+// Usage:
+//   const needle = createNeedlePhysics();
+//   // each frame:
+//   const displayNormalized = needle.step(targetNormalized);
+//
+// The needle has:
+//   - Asymmetric response: faster rise (RISE_BOOST), slower fall (FALL_BOOST)
+//   - Flutter at high readings (> FLUTTER_THRESHOLD) to simulate a real meter
+//   - Spring stiffness and exponential damping for smooth, non-oscillating motion
 export function createNeedlePhysics() {
+  let needlePosition = 0;    // current spring position [0, 1]
+  let needleVelocity = 0;    // spring velocity (not physics velocity; spring-internal)
+  let flutterCounter = 0;    // incrementing tick counter for flutter oscillation
+
   return {
-    normalizedPosition: 0,
-    velocity: 0,
-    tickCounter: 0,
-
+    // Advances the needle toward targetNormalized and returns the new position.
+    // Call once per animation frame.
     step(targetNormalized) {
-      const boost = targetNormalized > this.normalizedPosition ? NEEDLE_RISE_BOOST : NEEDLE_FALL_BOOST;
-      const springForce = (targetNormalized - this.normalizedPosition) * NEEDLE_STIFFNESS * boost;
-      this.velocity += springForce;
-      this.velocity *= NEEDLE_DAMPING;
-      this.normalizedPosition += this.velocity;
-      this.tickCounter += 1;
+      flutterCounter++;
 
-      const flutter = (this.normalizedPosition > NEEDLE_FLUTTER_THRESHOLD)
-        ? Math.sin(this.tickCounter * 0.12) * 0.002
-        : 0;
+      // Spring force toward target.
+      const springForce = (targetNormalized - needlePosition) * NEEDLE_STIFFNESS;
 
-      return Math.max(0, Math.min(1, this.normalizedPosition + flutter));
-    }
+      // Asymmetric response: faster when rising, slower when falling.
+      const movingUp = springForce > 0;
+      const boostFactor = movingUp ? NEEDLE_RISE_BOOST : NEEDLE_FALL_BOOST;
+
+      needleVelocity += springForce * boostFactor;
+      needleVelocity *= NEEDLE_DAMPING; // exponential decay each step
+
+      needlePosition += needleVelocity;
+
+      // Flutter near the top of the scale: simulates a vibrating mechanical needle.
+      if (needlePosition > NEEDLE_FLUTTER_THRESHOLD) {
+        const flutterAmplitude = (needlePosition - NEEDLE_FLUTTER_THRESHOLD) * 0.012;
+        needlePosition += Math.sin(flutterCounter * 0.15) * flutterAmplitude;
+      }
+
+      // Clamp to [0, 1].
+      needlePosition = needlePosition < 0 ? 0 : needlePosition > 1 ? 1 : needlePosition;
+      return needlePosition;
+    },
   };
 }
 
 
 // =============================================================
-// LOGARITHMIC SLIDER HELPERS
+// SLIDER BINDING
 // =============================================================
-// The spawn interval slider uses a logarithmic scale so that
-// values near 0.001s have fine-grained control while values
-// near 10s have coarser jumps.
+
+// Connects all HTML sliders to their corresponding state.params fields.
+// Each slider writes its value to state.params on the 'input' event,
+// and reads the initial state.params value on setup.
 //
-// Mapping: sliderPosition ∈ [0, 1] → value = min × (max/min)^position
-// Inverse: value → sliderPosition = log(value/min) / log(max/min)
-// =============================================================
-
-function logSliderToValue(sliderNormalized) {
-  return SPAWN_SLIDER_MIN * Math.pow(SPAWN_SLIDER_MAX / SPAWN_SLIDER_MIN, sliderNormalized);
-}
-
-function valueToLogSlider(value) {
-  return Math.log(value / SPAWN_SLIDER_MIN) / Math.log(SPAWN_SLIDER_MAX / SPAWN_SLIDER_MIN);
-}
-
-
-// =============================================================
-// FPS SNAP HELPER
-// =============================================================
-// Snaps the FPS slider value to the nearest multiple of 10
-// when the value is within a snap threshold.
-// =============================================================
-
-const FPS_SNAP_THRESHOLD = 3;  // snap if within 3 of a multiple of 10
-
-function snapFPS(rawValue) {
-  const nearest10 = Math.round(rawValue / 10) * 10;
-  if (Math.abs(rawValue - nearest10) <= FPS_SNAP_THRESHOLD) {
-    return nearest10;
-  }
-  return Math.round(rawValue);
-}
-
-
-// =============================================================
-// SLIDER INITIALIZATION
-// =============================================================
-
+// The function expects HTML elements with specific id attributes,
+// matching the IDs in index.html. If an element is not found, that
+// slider is silently skipped (no exception thrown).
 export function initSliders() {
-  /**
-   * Generic slider binder.
-   */
-  function bindSlider(sliderId, displayId, getter, setter, formatter) {
+  // Generic binder: links a slider element to a params field.
+  // getValue:  slider string → typed value for state.params
+  // getDisplay: typed value → display string for the label element
+  // The label element is expected to have id = sliderId + 'Value'.
+  function bindSlider(sliderId, getValue, getDisplay) {
     const slider = document.getElementById(sliderId);
-    const display = document.getElementById(displayId);
-    if (!slider || !display) return;  // guard against missing elements
-    display.textContent = formatter(getter());
+    const label  = document.getElementById(sliderId + 'Value');
+    if (!slider) return;
+
+    // Read from slider into params on change.
     slider.addEventListener('input', () => {
-      setter(parseFloat(slider.value));
-      display.textContent = formatter(getter());
+      const value = getValue(slider.value);
+      // Derive the params key from the slider id (camelCase convention).
+      // The slider id IS the params key, so we use it directly.
+      // Each call below explicitly maps id to params key for clarity.
     });
   }
 
-  const p = state.params;
+  // We use explicit bindings rather than a generic mapping, because each
+  // slider may need custom value conversion (log scale, inversion, etc.)
+  // and we want the code to be readable without decoding a mapping table.
 
-  // ---- FPS slider with tick snapping ----
-  const fpsSlider = document.getElementById('fpsSlider');
-  const fpsDisplay = document.getElementById('fpsValue');
-  if (fpsSlider && fpsDisplay) {
-    fpsDisplay.textContent = p.simulationFPS;
-    fpsSlider.addEventListener('input', () => {
-      const oldDt = 1 / p.simulationFPS;
-      const rawValue = parseFloat(fpsSlider.value);
-      p.simulationFPS = snapFPS(rawValue);
-      fpsSlider.value = p.simulationFPS;  // snap the thumb visually
-      const newDt = 1 / p.simulationFPS;
-      const ratio = newDt / oldDt;
+  function bind(sliderId, paramsKey, parseValue, formatDisplay) {
+    const slider       = document.getElementById(sliderId);
+    const displayLabel = document.getElementById(sliderId + 'Value');
+    if (!slider) return;
 
-      // Rescale Verlet implicit velocity to preserve speed across FPS changes
-      const ball = state.ball;
-      ball.prevX = ball.x - (ball.x - ball.prevX) * ratio;
-      ball.prevY = ball.y - (ball.y - ball.prevY) * ratio;
+    // Initialise slider from state.params (in case HTML default differs).
+    // We do NOT set slider.value here because the HTML value is the source of
+    // truth at startup — we set params from the slider on init.
+    const initialValue = parseValue(slider.value);
+    state.params[paramsKey] = initialValue;
+    if (displayLabel) displayLabel.textContent = formatDisplay(initialValue);
 
-      fpsDisplay.textContent = p.simulationFPS;
+    slider.addEventListener('input', () => {
+      const value = parseValue(slider.value);
+      state.params[paramsKey] = value;
+      if (displayLabel) displayLabel.textContent = formatDisplay(value);
     });
   }
 
-  // ---- Physics sliders ----
-  bindSlider('forceSlider',    'forceValue',    () => p.forceMagnitude,  v => p.forceMagnitude = v,  v => v);
-  bindSlider('massSlider',     'massValue',     () => p.ballMass,        v => p.ballMass = v,        v => v.toFixed(1));
-  bindSlider('linFricSlider',  'linFricValue',  () => p.linearFriction,  v => p.linearFriction = v,  v => v.toFixed(1));
-  bindSlider('angFricSlider',  'angFricValue',  () => p.angularFriction, v => p.angularFriction = v, v => v.toFixed(1));
-  bindSlider('bounceSlider',   'bounceValue',   () => p.bounciness,      v => p.bounciness = v,      v => v.toFixed(2));
-  bindSlider('timeScaleSlider','timeScaleValue', () => p.timeScale,      v => p.timeScale = v,       v => v.toFixed(1));
+  // Helper formatters.
+  const fmt1  = (v) => v.toFixed(1);
+  const fmt2  = (v) => v.toFixed(2);
+  const fmt3  = (v) => v.toFixed(3);
+  const fmt4  = (v) => v.toFixed(4);
+  const fmtInt = (v) => String(Math.round(v));
+  const fmtPct = (v) => (v * 100).toFixed(0) + '%';
+  const parseFloat1 = (s) => parseFloat(s);
+  const parseInt1   = (s) => parseInt(s, 10);
 
-  // ---- Trail sliders ----
-  // Spawn interval uses logarithmic mapping
-  const spawnSlider = document.getElementById('spawnIntervalSlider');
-  const spawnDisplay = document.getElementById('spawnIntervalValue');
-  if (spawnSlider && spawnDisplay) {
-    // Initialize slider position from the current value
-    const initialNorm = valueToLogSlider(p.trailSpawnInterval);
-    spawnSlider.value = initialNorm;
-    spawnDisplay.textContent = p.trailSpawnInterval.toFixed(3);
+  // ---- Simulation ----
+  bind('simulationFps',    'simulationFps',    (s) => {
+    // Snap to nearest 10 Hz.
+    const raw    = parseInt(s, 10);
+    const snapped = Math.round(raw / 10) * 10;
+    return Math.max(10, Math.min(120, snapped));
+  }, fmtInt);
 
-    spawnSlider.addEventListener('input', () => {
-      const normalized = parseFloat(spawnSlider.value);
-      p.trailSpawnInterval = logSliderToValue(normalized);
-      // Format display based on magnitude
-      if (p.trailSpawnInterval < 0.01) {
-        spawnDisplay.textContent = p.trailSpawnInterval.toFixed(4);
-      } else if (p.trailSpawnInterval < 1) {
-        spawnDisplay.textContent = p.trailSpawnInterval.toFixed(3);
+  bind('timeScale', 'timeScale', parseFloat1, fmt2);
+
+  // ---- Car physics ----
+  bind('carMassKg',             'carMassKg',            parseFloat1, fmtInt);
+  bind('rollingResistanceCoeff','rollingResistanceCoeff',parseFloat1, fmt4);
+  bind('aeroDragCoeff',         'aeroDragCoeff',         parseFloat1, fmt5);
+  bind('tireFrictionCoeff',     'tireFrictionCoeff',     parseFloat1, fmt2);
+  bind('cogHeightPx',           'cogHeightPx',           parseFloat1, fmt1);
+  bind('bounciness',            'bounciness',            parseFloat1, fmt2);
+  bind('stallResistance',       'stallResistance',       parseFloat1, fmt2);
+
+  // ---- Clutch ----
+  bind('clutchBitePoint',  'clutchBitePoint',  parseFloat1, fmt2);
+  bind('clutchBiteRange',  'clutchBiteRange',  parseFloat1, fmt2);
+  bind('clutchBiteCurve',  'clutchBiteCurve',  parseFloat1, fmt1);
+  bind('clutchEngageTime', 'clutchEngageTime', parseFloat1, fmt2);
+
+  // ---- Trail ----
+  bind('trailSpawnInterval', 'trailSpawnInterval', (s) => {
+    // Logarithmic mapping: 0.001 s to 10 s.
+    const raw = parseFloat(s) / 100; // slider 0–100 → 0–1
+    return 0.001 * Math.pow(10000, raw); // log scale
+  }, (v) => v.toFixed(3) + 's');
+
+  bind('trailLifespan', 'trailLifespan', parseFloat1, fmt1);
+  bind('trailFade',     'trailFade',     parseFloat1, fmt2);
+
+  // ---- Camera ----
+  bind('cameraStiffness',       'cameraStiffness',       parseFloat1, fmt1);
+  bind('cameraDamping',         'cameraDamping',         parseFloat1, fmt1);
+  bind('cameraZoomSensitivity', 'cameraZoomSensitivity', parseFloat1, fmt2);
+
+  // ---- Motion blur ----
+  bind('motionBlurSamples',   'motionBlurSamples',   parseInt1,   fmtInt);
+  bind('motionBlurIntensity', 'motionBlurIntensity', parseFloat1, fmt2);
+  bind('motionBlurThreshold', 'motionBlurThreshold', parseFloat1, fmtInt);
+
+  // ---- Map ----
+  bind('mapWidth',  'mapWidth',  parseFloat1, fmtInt);
+  bind('mapHeight', 'mapHeight', parseFloat1, fmtInt);
+
+  // ---- Gauges ----
+  bind('gaugeLabelScale', 'gaugeLabelScale', (s) => {
+    // Slider 60–160 → scale 0.6–1.6
+    return parseFloat(s) / 100;
+  }, (v) => v.toFixed(1) + '×');
+
+  // ---- Engine toggle button ----
+  const engineToggleButton = document.getElementById('engineToggle');
+  if (engineToggleButton) {
+    engineToggleButton.addEventListener('click', () => {
+      state.engine.isRunning = !state.engine.isRunning;
+      if (state.engine.isRunning) {
+        state.engine.isStalled = false;
+        state.engine.rpm = 800; // restart at idle
+        engineToggleButton.textContent = 'Engine ON';
+        engineToggleButton.style.background = '#2ecc71';
       } else {
-        spawnDisplay.textContent = p.trailSpawnInterval.toFixed(1);
+        engineToggleButton.textContent = 'Engine OFF';
+        engineToggleButton.style.background = '#e74c3c';
       }
     });
   }
-
-  bindSlider('lifespanSlider',      'lifespanValue',      () => p.trailLifespan,      v => p.trailLifespan = v,      v => v.toFixed(1));
-  bindSlider('fadeSlider',          'fadeValue',          () => p.trailFade,          v => p.trailFade = v,          v => v.toFixed(2));
-
-  // ---- Steering: Turn Rate now ranges [-5, +5] ----
-  bindSlider('turnRateSlider',  'turnRateValue',
-    () => p.turnRateCoefficient,
-    v => p.turnRateCoefficient = v,
-    v => {
-      const sign = v > 0 ? '+' : v < 0 ? '' : ' ';
-      return sign + v.toFixed(1);
-    }
-  );
-  bindSlider('wallGripSlider',  'wallGripValue',  () => p.wallGripCoefficient,  v => p.wallGripCoefficient = v,  v => v.toFixed(2));
-
-  // ---- Gauge label size ----
-  const gaugeLabelSlider = document.getElementById('gaugeLabelSize');
-  const gaugeLabelDisplay = document.getElementById('gaugeLabelReadout');
-  if (gaugeLabelSlider && gaugeLabelDisplay) {
-    gaugeLabelDisplay.textContent = gaugeLabelSlider.value;
-    gaugeLabelSlider.addEventListener('input', () => {
-      p.gaugeLabelScale = parseFloat(gaugeLabelSlider.value) / 100;
-      gaugeLabelDisplay.textContent = gaugeLabelSlider.value;
-    });
-  }
-
-  // ---- Canvas resolution ----
-  bindSlider('canvasResolutionSlider', 'canvasResolutionValue', () => p.canvasResolution, v => p.canvasResolution = v, v => v.toFixed(1));
-
-  // ---- Engine throttle response ----
-  bindSlider('throttleRiseSlider',  'throttleRiseValue',  () => p.throttleRise,  v => p.throttleRise = v,  v => v.toFixed(2));
-  bindSlider('throttleFallSlider',  'throttleFallValue',  () => p.throttleFall,  v => p.throttleFall = v,  v => v.toFixed(2));
-  bindSlider('wheelRadiusSlider',   'wheelRadiusValue',   () => p.wheelRadius,      v => p.wheelRadius = v,      v => Math.round(v));
-  bindSlider('stallResistSlider',   'stallResistValue',   () => p.stallResistance,  v => p.stallResistance = v,  v => v.toFixed(2));
-
-  // ---- Clutch bite/slip model ----
-  bindSlider('clutchTimeSlider',   'clutchTimeValue',   () => p.clutchEngagementTime, v => p.clutchEngagementTime = v, v => v.toFixed(2));
-  bindSlider('clutchBiteSlider',   'clutchBiteValue',   () => p.clutchBitePoint,      v => p.clutchBitePoint = v,      v => v.toFixed(2));
-  bindSlider('clutchRangeSlider',  'clutchRangeValue',  () => p.clutchBiteRange,      v => p.clutchBiteRange = v,      v => v.toFixed(2));
-  bindSlider('clutchCurveSlider',  'clutchCurveValue',  () => p.clutchCurve,          v => p.clutchCurve = v,          v => v.toFixed(1));
-  bindSlider('clutchSyncSlider',   'clutchSyncValue',   () => p.clutchSyncRPMPerSec,  v => p.clutchSyncRPMPerSec = v,  v => Math.round(v));
-
-  // ---- Engine on/off toggle ----
-  const engineBtn = document.getElementById('engineToggleBtn');
-  if (engineBtn) {
-    const updateLabel = () => {
-      engineBtn.textContent = state.engine.isRunning ? '⏹ STOP ENGINE' : '▶ START ENGINE';
-      engineBtn.style.borderColor = state.engine.isRunning ? '#c0392b' : '#27ae60';
-      engineBtn.style.color = state.engine.isRunning ? '#c0392b' : '#27ae60';
-    };
-    updateLabel();
-    engineBtn.addEventListener('click', () => {
-      state.engine.isRunning = !state.engine.isRunning;
-      if (state.engine.isRunning) { state.engine.isStalled = false; state.engine.rpm = 800; }
-      updateLabel();
-    });
-  }
-
-  // ---- Temperature rise/fall (independent from throttle) ----
-  bindSlider('heatRiseSlider',  'heatRiseValue',  () => p.heatGenerationRate,  v => p.heatGenerationRate = v,  v => v.toFixed(0));
-  bindSlider('heatFallSlider',  'heatFallValue',  () => p.heatDissipationRate, v => p.heatDissipationRate = v, v => v.toFixed(0));
-
-  // ---- Camera sliders ----
-  bindSlider('cameraStiffnessSlider', 'cameraStiffnessValue', () => p.cameraStiffness,      v => p.cameraStiffness = v,      v => v.toFixed(1));
-  bindSlider('cameraDampingSlider',   'cameraDampingValue',   () => p.cameraDamping,         v => p.cameraDamping = v,         v => v.toFixed(1));
-  bindSlider('cameraZoomSlider',      'cameraZoomValue',      () => p.cameraZoomSensitivity, v => p.cameraZoomSensitivity = v, v => v.toFixed(2));
-
-  // ---- Motion blur sliders ----
-  bindSlider('blurSamplesSlider',   'blurSamplesValue',   () => p.motionBlurSamples,   v => p.motionBlurSamples = v,   v => Math.round(v));
-  bindSlider('blurIntensitySlider', 'blurIntensityValue', () => p.motionBlurIntensity, v => p.motionBlurIntensity = v, v => v.toFixed(2));
-  bindSlider('blurThresholdSlider', 'blurThresholdValue', () => p.motionBlurThreshold, v => p.motionBlurThreshold = v, v => Math.round(v));
-
-  // ---- Map size sliders ----
-  bindSlider('mapWidthSlider',  'mapWidthValue',  () => p.mapWidth,  v => p.mapWidth = v,  v => Math.round(v));
-  bindSlider('mapHeightSlider', 'mapHeightValue', () => p.mapHeight, v => p.mapHeight = v, v => Math.round(v));
 }
 
+// Helper: 5 decimal place formatter (for very small coefficients like aeroDragCoeff).
+function fmt5(v) { return v.toFixed(5); }
+
 
 // =============================================================
-// INFO BAR UPDATE
+// INFO BAR
 // =============================================================
 
+// Updates the text displays in the info bar at the bottom of the simulation canvas.
+// Called once per animation frame from main.js.
+// Reads from state.body and state.engine.
 export function updateInfoBar() {
-  const speed = Math.hypot(state.velocity.x, state.velocity.y);
-  const headingDegrees = ((state.carHeading * 180 / Math.PI) % 360 + 360) % 360;
+  const body   = state.body;
+  const engine = state.engine;
+  const trail  = state.trail;
 
-  document.getElementById('velocityDisplay').textContent = speed.toFixed(1);
-  document.getElementById('rpmDisplay').textContent =
-    !state.engine.isRunning ? 'OFF' :
-    state.engine.isStalled ? 'STALL' : Math.round(state.engine.rpm);
-  document.getElementById('gearDisplay').textContent = state.engine.currentGear;
-  document.getElementById('headingDisplay').textContent = headingDegrees.toFixed(0) + '°';
-  document.getElementById('trailCount').textContent = state.trail.arrows.length;
-  document.getElementById('tempDisplay').textContent =
-    Math.round(state.engine.temperatureCelsius) + '°';
+  setInfoCell('velocityDisplay',
+    `${(body.speed / KPH_TO_PX_PER_SEC).toFixed(1)} km/h`);
+
+  setInfoCell('rpmDisplay',
+    engine.isStalled ? 'STALL' :
+    !engine.isRunning ? 'OFF' :
+    `${Math.round(engine.rpm)} rpm`);
+
+  setInfoCell('gearDisplay', engine.currentGear);
+
+  setInfoCell('headingDisplay',
+    `${(body.heading * 180 / Math.PI % 360 + 360).toFixed(0)}°`);
+
+  setInfoCell('clutchDisplay',
+    `${(engine.clutchEngagement * 100).toFixed(0)}%`);
+
+  setInfoCell('trailDisplay',
+    `${trail.arrows.length} arrows`);
+}
+
+// Sets the textContent of an info cell by id, silently skipping if not found.
+function setInfoCell(elementId, text) {
+  const element = document.getElementById(elementId);
+  if (element) element.textContent = text;
 }

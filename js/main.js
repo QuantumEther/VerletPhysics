@@ -1,277 +1,389 @@
 // =============================================================
 // MAIN — entry point and game loop
 // =============================================================
-// Wires all modules together. Owns the requestAnimationFrame
-// loop with fixed-timestep physics sub-stepping and variable-
-// rate rendering.
+// Wires all modules together. Owns the requestAnimationFrame loop
+// with fixed-timestep physics sub-stepping and variable-rate rendering.
 //
-// Render pipeline:
-//   1. Apply canvas resolution
-//   2. Apply camera transform (world space begins)
-//   3. Draw checkerboard background (with motion blur)
-//   4. Draw map boundary walls
-//   5. Draw trail arrows
-//   6. Draw ball (with motion blur)
-//   7. Remove camera transform (screen space begins)
-//   8. Draw HUD elements (steering wheel, throttle bar)
-//   9. Draw analog gauges (separate canvases)
+// PHYSICS STEP ORDER (enforced here, documented in physics.js):
+//   1.  updateSteering(dt)
+//   2.  updateEngine(dt)
+//   3.  computeBodyDerivedState(dt)
+//   4.  computeWeightTransfer()
+//   5.  computeTireForces()
+//   6.  computeDragForces()
+//   7.  computeBrakeForce()
+//   8.  combine into net linear + angular acceleration
+//   9.  verletIntegrateAllPoints(dt, ...)
+//  10.  solveRigidBodyConstraints()
+//  11.  clampParticleDisplacements()
+//  12.  handleBoundaryCollisions()
+//  13.  solveRigidBodyConstraints()  (again after collision)
+//  14.  computeBodyDerivedState(dt)  (recompute for camera and render)
+//  15.  updateCamera(dt)
+//  16.  trail spawn / update
+//  17.  updateEngineSound(...)       (no-op stub)
+//
+// RENDER ORDER (once per animation frame, after all sub-steps):
+//   World space (camera transform applied):
+//     drawCheckerboard, drawMapBoundary, drawTrailArrows, drawCar
+//   Screen space (HUD, no camera transform):
+//     drawSteeringWheelHud, drawThrottleBar, drawBrakeBar, drawClutchBar,
+//     drawGearIndicator, updateInfoBar
+//   Gauge canvases (separate contexts):
+//     Tachometer, Speedometer, Lateral-G gauge
 // =============================================================
 
 import state from './state.js';
-import { MAX_SPEED_GAUGE, REDLINE_RPM, MAX_TEMP_CELSIUS, NORMAL_TEMP_CELSIUS } from './constants.js';
-import { initInput } from './input.js';
 import {
-  updateHeadingAndSteering,
+  DEFAULT_MAP_WIDTH_PX,
+  DEFAULT_MAP_HEIGHT_PX,
+  MAX_FRAME_TIME_SEC,
+  MOMENT_OF_INERTIA,
+  TACHOMETER_MAX_RPM,
+  TACHOMETER_REDLINE_RPM,
+  SPEEDOMETER_MAX_KPH,
+  KPH_TO_PX_PER_SEC,
+} from './constants.js';
+
+import { initInput } from './input.js';
+
+import {
+  initializeCarBody,
+  updateSteering,
   updateEngine,
-  computeAcceleration,
-  verletStep,
-  clampDisplacement,
+  computeBodyDerivedState,
+  computeWeightTransfer,
+  computeTireForces,
+  computeDragForces,
+  computeBrakeForce,
+  verletIntegrateAllPoints,
+  solveRigidBodyConstraints,
+  clampParticleDisplacements,
   handleBoundaryCollisions,
-  cacheVelocity,
-  updateRollingOrientation,
   updateCamera,
+  updateEngineSound,
 } from './physics.js';
-import { spawnTrailArrow, updateTrailArrows, drawTrailArrows } from './trail.js';
+
+import {
+  spawnTrailArrow,
+  updateTrailArrows,
+  drawTrailArrows,
+} from './trail.js';
+
 import {
   applyCameraTransform,
   removeCameraTransform,
   drawCheckerboard,
   drawMapBoundary,
-  drawBall,
-  drawSteeringWheel,
+  drawCar,
+  drawSteeringWheelHud,
   drawThrottleBar,
+  drawBrakeBar,
+  drawClutchBar,
+  drawGearIndicator,
   drawAnalogGauge,
 } from './renderer.js';
+
 import { initSliders, updateInfoBar, createNeedlePhysics } from './ui.js';
 
 
 // =============================================================
-// INITIALIZATION
+// CANVAS SETUP
 // =============================================================
 
-const simCanvas = document.getElementById('simCanvas');
-const simCtx = simCanvas.getContext('2d');
-const speedCanvas = document.getElementById('speedCanvas');
-const speedCtx = speedCanvas.getContext('2d');
-const rpmCanvas = document.getElementById('rpmCanvas');
-const rpmCtx = rpmCanvas.getContext('2d');
-const heatCanvas = document.getElementById('heatCanvas');
-const heatCtx = heatCanvas.getContext('2d');
+// Gets and validates a canvas element by id.
+// Throws a descriptive error if the element is missing, which is
+// easier to diagnose than a null-dereference error later.
+function getCanvas(elementId) {
+  const canvas = document.getElementById(elementId);
+  if (!canvas) throw new Error(`Canvas element #${elementId} not found in index.html`);
+  return canvas;
+}
 
+// Applies the resolution scaling to a canvas.
+// The canvas internal pixel dimensions are set to (cssWidth × resolutionScale)
+// and the context is scaled accordingly. This allows trading render quality
+// for performance via the resolution slider without changing layout.
+function applyCanvasResolution(canvas, ctx, cssWidth, cssHeight, resolutionScale) {
+  canvas.width  = Math.round(cssWidth  * resolutionScale);
+  canvas.height = Math.round(cssHeight * resolutionScale);
+  ctx.scale(resolutionScale, resolutionScale);
+}
+
+
+// =============================================================
+// INITIALISATION
+// =============================================================
+
+// Canvases.
+const simCanvas   = getCanvas('simCanvas');
+const rpmCanvas   = getCanvas('rpmCanvas');
+const speedCanvas = getCanvas('speedCanvas');
+const latGCanvas  = getCanvas('latGCanvas'); // lateral G gauge (third canvas)
+
+const simCtx   = simCanvas.getContext('2d');
+const rpmCtx   = rpmCanvas.getContext('2d');
+const speedCtx = speedCanvas.getContext('2d');
+const latGCtx  = latGCanvas.getContext('2d');
+
+// Apply initial resolution (1× — sliders are not yet connected).
+// main canvas uses CSS size; gauge canvases are fixed size in HTML.
+const simCssWidth  = simCanvas.clientWidth  || simCanvas.width;
+const simCssHeight = simCanvas.clientHeight || simCanvas.height;
+
+// Attach input listeners before anything else so no events are missed.
 initInput(simCanvas);
+
+// Bind HTML sliders to state.params. This reads initial HTML slider values
+// into state.params so physics starts with the correct parameters.
 initSliders();
 
+// Create needle physics instances for each gauge.
+// These are independent spring-damper systems — one per gauge.
+const rpmNeedle  = createNeedlePhysics();
 const speedNeedle = createNeedlePhysics();
-const rpmNeedle = createNeedlePhysics();
-const heatNeedle = createNeedlePhysics();
+const latGNeedle  = createNeedlePhysics();
 
-// =============================================================
-// PHYSICS WORLD / VIEWPORT
-// =============================================================
-// The viewport (what you see on screen) is the CSS size of simCanvas.
-// The world (map) can be much larger, defined by state.params.mapWidth/mapHeight.
-// The camera follows the ball within the world.
-// =============================================================
+// Place the car in the centre of the default map.
+initializeCarBody(DEFAULT_MAP_WIDTH_PX * 0.5, DEFAULT_MAP_HEIGHT_PX * 0.5);
 
-let viewportWidth = simCanvas.offsetWidth;
-let viewportHeight = simCanvas.offsetHeight;
-
-/**
- * Center the ball and camera in the world at startup.
- */
-function initializePositions() {
-  const cx = state.params.mapWidth / 2;
-  const cy = state.params.mapHeight / 2;
-
-  // Ball starts at world center
-  state.ball.x = cx;
-  state.ball.y = cy;
-  state.ball.prevX = cx;
-  state.ball.prevY = cy;
-
-  // Camera starts on ball
-  state.camera.x = cx;
-  state.camera.y = cy;
-  state.camera.prevX = cx;
-  state.camera.prevY = cy;
-}
-
-initializePositions();
-
-
-// =============================================================
-// CANVAS RESOLUTION HELPER
-// =============================================================
-
-function applyCanvasResolution(canvas, context, resolution) {
-  const displayWidth = canvas.offsetWidth;
-  const displayHeight = canvas.offsetHeight;
-
-  viewportWidth = displayWidth;
-  viewportHeight = displayHeight;
-
-  canvas.width = Math.round(displayWidth * resolution);
-  canvas.height = Math.round(displayHeight * resolution);
-
-  context.scale(resolution, resolution);
-
-  return { width: displayWidth, height: displayHeight };
-}
+// Initial derivation so body state is valid before the first render.
+computeBodyDerivedState(1 / 60);
+computeWeightTransfer();
 
 
 // =============================================================
 // GAME LOOP
 // =============================================================
 
-function mainLoop(currentTimestamp) {
+// requestAnimationFrame callback. Receives the DOMHighResTimeStamp
+// in milliseconds.
+function mainLoop(timestampMilliseconds) {
   requestAnimationFrame(mainLoop);
 
-  const loop = state.loop;
-  const params = state.params;
+  // Convert timestamp to seconds.
+  const timestampSeconds = timestampMilliseconds * 0.001;
 
-  if (!loop.previousTimestamp) {
-    loop.previousTimestamp = currentTimestamp;
-    return;
+  // Calculate raw frame time.
+  if (state.loop.previousTimestamp === 0) {
+    state.loop.previousTimestamp = timestampSeconds;
+  }
+  let frameTime = timestampSeconds - state.loop.previousTimestamp;
+  state.loop.previousTimestamp = timestampSeconds;
+
+  // Apply time scale (1.0 = normal, 0.5 = half speed, 2.0 = double speed).
+  frameTime *= state.params.timeScale;
+
+  // Clamp to prevent spiral of death if the tab was hidden or the frame took too long.
+  if (frameTime > MAX_FRAME_TIME_SEC) frameTime = MAX_FRAME_TIME_SEC;
+
+  // Fixed physics timestep.
+  const physicsFixedDt = 1.0 / state.params.simulationFps;
+
+  state.loop.accumulator += frameTime;
+
+  // Physics sub-steps: run as many fixed-dt steps as the accumulated time allows.
+  while (state.loop.accumulator >= physicsFixedDt) {
+    runPhysicsStep(physicsFixedDt);
+    state.loop.accumulator -= physicsFixedDt;
   }
 
-  let frameTime = (currentTimestamp - loop.previousTimestamp) / 1000;
-  if (frameTime > 0.25) frameTime = 0.25;
-  loop.previousTimestamp = currentTimestamp;
+  // Render once per animation frame (no interpolation).
+  renderFrame();
+}
 
-  loop.accumulator += frameTime * params.timeScale;
-  const dt = 1 / params.simulationFPS;
 
-  // ---- Fixed-timestep physics sub-steps ----
-  while (loop.accumulator >= dt) {
-    // 1. Heading from steering input
-    updateHeadingAndSteering(dt);
+// =============================================================
+// ONE PHYSICS SUB-STEP
+// =============================================================
 
-    // 2. Full engine/drivetrain update (RPM, temperature, clutch, stall)
-    updateEngine(dt);
+// Runs a single fixed-dt physics sub-step in the mandatory call order.
+// dt is in seconds.
+function runPhysicsStep(dt) {
+  // 1. Update steering: maps visual wheel angle → front tyre lock angle,
+  //    applies self-centring.
+  updateSteering(dt);
 
-    // 3. Compute drive force + braking acceleration
-    const acceleration = computeAcceleration(dt);
+  // 2. Update engine: advances clutch pedal position, computes clutch
+  //    engagement from pedal, updates RPM for the current clutch zone,
+  //    checks for stall.
+  updateEngine(dt);
 
-    // 4. Verlet position integration
-    verletStep(dt, acceleration);
+  // 3. Derive body state: centre, heading, velocity, angular velocity,
+  //    longitudinal and lateral accelerations. Must run before anything
+  //    that reads from state.body.
+  computeBodyDerivedState(dt);
 
-    // 5. Prevent wall tunneling
-    clampDisplacement();
+  // 4. Weight transfer: distributes normal load to each wheel based on
+  //    the body's longitudinal and lateral accelerations.
+  computeWeightTransfer();
 
-    // 6. Boundary collisions (uses mapWidth/mapHeight from state.params)
-    handleBoundaryCollisions(dt);
+  // 5–7. Compute all forces.
+  const tireForces  = computeTireForces();   // { forceX, forceY, torque }
+  const dragForces  = computeDragForces();   // { forceX, forceY }
+  const brakeForces = computeBrakeForce();   // { forceX, forceY }
 
-    // 7. Cache velocity
-    cacheVelocity(dt);
+  // 8. Sum forces into net values.
+  const netForceX  = tireForces.forceX + dragForces.forceX + brakeForces.forceX;
+  const netForceY  = tireForces.forceY + dragForces.forceY + brakeForces.forceY;
+  const netTorque  = tireForces.torque;
 
-    // 8. Rolling orientation (cosmetic)
-    updateRollingOrientation(dt);
+  // 9. Convert to accelerations (F = ma → a = F/m; τ = Iα → α = τ/I).
+  const massKg            = state.params.carMassKg;
+  const netLinearAccelX   = netForceX / massKg;
+  const netLinearAccelY   = netForceY / massKg;
+  const netAngularAccel   = netTorque  / MOMENT_OF_INERTIA;
 
-    // 9. Camera tracking (Verlet-based with zoom)
-    updateCamera(dt);
+  // 10. Verlet integration: advance all four wheel positions using the
+  //     computed linear and angular accelerations.
+  verletIntegrateAllPoints(dt, netLinearAccelX, netLinearAccelY, netAngularAccel);
 
-    // 10. Trail: spawn arrows at configured interval
-    state.trail.spawnAccumulator += dt;
-    while (state.trail.spawnAccumulator >= params.trailSpawnInterval) {
-      spawnTrailArrow();
-      state.trail.spawnAccumulator -= params.trailSpawnInterval;
-    }
-    updateTrailArrows(dt);
+  // 11. Constraint solver pass 1: restore rigid body distances after integration.
+  solveRigidBodyConstraints();
 
-    loop.accumulator -= dt;
+  // 12. Anti-tunnelling: clamp any particle that moved too far in one step.
+  clampParticleDisplacements();
+
+  // 13. Boundary collisions: bounce particles off map walls.
+  handleBoundaryCollisions();
+
+  // 14. Constraint solver pass 2: restore rigidity after collision response.
+  //     Without this second pass, a corner hitting a wall can stretch the body.
+  solveRigidBodyConstraints();
+
+  // 15. Recompute derived state after integration and collision resolution.
+  //     This ensures the camera and renderer read the final, correct values.
+  computeBodyDerivedState(dt);
+
+  // 16. Camera: spring-damper follow of body centre, speed-based zoom.
+  updateCamera(dt);
+
+  // 17. Trail: spawn arrows at the spawn interval; age and cull existing ones.
+  state.trail.spawnAccumulator += dt;
+  if (state.trail.spawnAccumulator >= state.params.trailSpawnInterval) {
+    state.trail.spawnAccumulator -= state.params.trailSpawnInterval;
+    spawnTrailArrow();
+  }
+  updateTrailArrows(dt);
+
+  // 18. Audio stub: update engine sound with current RPM and throttle.
+  let throttleAmount = 0;
+  if (state.input.mouseThrottleActive) {
+    throttleAmount = state.input.mouseThrottleAmount;
+  } else if (state.input.throttleKeyHeld) {
+    throttleAmount = 1.0;
+  }
+  updateEngineSound(state.engine.rpm, TACHOMETER_MAX_RPM, throttleAmount);
+}
+
+
+// =============================================================
+// RENDER FRAME
+// =============================================================
+
+// Draws one complete frame. Called once per animation frame regardless
+// of how many physics sub-steps ran this frame.
+function renderFrame() {
+  const canvasWidth  = simCanvas.clientWidth  || simCanvas.width;
+  const canvasHeight = simCanvas.clientHeight || simCanvas.height;
+
+  // Match canvas buffer size to CSS display size (handles DPI differences).
+  if (simCanvas.width  !== canvasWidth  ||
+      simCanvas.height !== canvasHeight) {
+    simCanvas.width  = canvasWidth;
+    simCanvas.height = canvasHeight;
   }
 
-
-  // ---- RENDER ----
-
-  // Apply canvas resolution scaling
-  const displayDims = applyCanvasResolution(simCanvas, simCtx, params.canvasResolution);
-
-  // Clear canvas
-  simCtx.clearRect(0, 0, displayDims.width, displayDims.height);
-
-  // ---- WORLD SPACE (camera transform active) ----
-  applyCameraTransform(simCtx, displayDims.width, displayDims.height);
-
-  drawCheckerboard(simCtx, displayDims.width, displayDims.height);
+  // --- World space (camera transform active) ---
+  simCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+  applyCameraTransform(simCtx, canvasWidth, canvasHeight);
+  drawCheckerboard(simCtx, canvasWidth, canvasHeight);
   drawMapBoundary(simCtx);
   drawTrailArrows(simCtx);
-  drawBall(simCtx);
-
+  drawCar(simCtx);
   removeCameraTransform(simCtx);
 
-  // ---- SCREEN SPACE (HUD elements) ----
-  drawSteeringWheel(simCtx, displayDims.width, displayDims.height);
-  drawThrottleBar(simCtx, displayDims.width, displayDims.height);
+  // --- Screen space (HUD, no camera transform) ---
+  drawSteeringWheelHud(simCtx, canvasWidth, canvasHeight);
+  drawThrottleBar(simCtx, canvasWidth, canvasHeight);
+  drawBrakeBar(simCtx, canvasWidth, canvasHeight);
+  drawClutchBar(simCtx, canvasWidth, canvasHeight);
+  drawGearIndicator(simCtx, canvasWidth, canvasHeight);
 
-  // Update info bar
+  // Info bar text.
   updateInfoBar();
 
-  // ---- GAUGE RENDERING ----
-  const speed = Math.hypot(state.velocity.x, state.velocity.y);
-  const speedNormalized = Math.min(speed / MAX_SPEED_GAUGE, 1);
-  const speedNeedleValue = speedNeedle.step(speedNormalized);
+  // --- Gauge canvases ---
+  drawGauges();
+}
 
-  const rpmNormalized = (!state.engine.isRunning || state.engine.isStalled)
-    ? 0
-    : Math.min(state.engine.rpm / REDLINE_RPM, 1);
-  const rpmNeedleValue = rpmNeedle.step(rpmNormalized);
 
-  // Heat gauge: normalize within gauge range 60–130°C
-  const heatGaugeMin = 60;
-  const heatGaugeMax = 130;
-  const heatNormalized = Math.max(0, Math.min(1,
-    (state.engine.temperatureCelsius - heatGaugeMin) / (heatGaugeMax - heatGaugeMin)
-  ));
-  const heatNeedleValue = heatNeedle.step(heatNormalized);
+// Draws all three analog gauge canvases.
+// Each gauge is drawn independently so a bug in one cannot break the others.
+function drawGauges() {
+  const labelFontScale = state.params.gaugeLabelScale;
 
-  const labelScale = params.gaugeLabelScale;
-
-  // Speedometer
-  drawAnalogGauge(speedCtx, speedCanvas.width, speedCanvas.height, {
-    value: speedNeedleValue * MAX_SPEED_GAUGE,
-    min: 0,
-    max: MAX_SPEED_GAUGE,
-    title: 'SPEED',
-    subtitle: 'VELOCITY',
-    unitRight: 'px/s',
-    majorStep: 100,
-    minorDiv: 4,
-    redFrom: 600,
-    labelFormatter: (v) => String(Math.round(v)),
-    labelFontScale: labelScale,
-  });
-
-  // RPM gauge
+  // Tachometer: 0–7000 RPM, redline at 6500.
+  const rpmNormalized = rpmNeedle.step(
+    state.engine.isStalled || !state.engine.isRunning
+      ? 0
+      : state.engine.rpm / TACHOMETER_MAX_RPM
+  );
   drawAnalogGauge(rpmCtx, rpmCanvas.width, rpmCanvas.height, {
-    value: rpmNeedleValue * REDLINE_RPM,
-    min: 0,
-    max: 8000,
-    title: 'RPM',
-    subtitle: 'ENGINE',
-    unitRight: 'x1000',
-    majorStep: 1000,
-    minorDiv: 5,
-    redFrom: 7000,
-    labelFormatter: (v) => String(Math.round(v / 1000)),
-    labelFontScale: labelScale,
+    value:           state.engine.rpm,
+    min:             0,
+    max:             TACHOMETER_MAX_RPM,
+    title:           'RPM',
+    subtitle:        '× 1000',
+    majorStep:       1000,
+    minorDivisions:  5,
+    redFrom:         TACHOMETER_REDLINE_RPM,
+    needleNormalized: rpmNormalized,
+    labelFormatter:  (v) => String(v / 1000),
+    labelFontScale,
   });
 
-  // Heat gauge
-  const heatDisplayValue = heatGaugeMin + heatNeedleValue * (heatGaugeMax - heatGaugeMin);
-  drawAnalogGauge(heatCtx, heatCanvas.width, heatCanvas.height, {
-    value: heatDisplayValue,
-    min: heatGaugeMin,
-    max: heatGaugeMax,
-    title: 'TEMP',
-    subtitle: 'HEAT',
-    unitRight: '°C',
-    majorStep: 10,
-    minorDiv: 2,
-    redFrom: MAX_TEMP_CELSIUS,
-    labelFormatter: (v) => String(Math.round(v)),
-    labelFontScale: labelScale,
+  // Speedometer: 0–200 km/h.
+  const speedKph       = state.body.speed / KPH_TO_PX_PER_SEC;
+  const speedNormalized = speedNeedle.step(speedKph / SPEEDOMETER_MAX_KPH);
+  drawAnalogGauge(speedCtx, speedCanvas.width, speedCanvas.height, {
+    value:           speedKph,
+    min:             0,
+    max:             SPEEDOMETER_MAX_KPH,
+    title:           'SPEED',
+    subtitle:        'km/h',
+    majorStep:       20,
+    minorDivisions:  4,
+    redFrom:         null,
+    needleNormalized: speedNormalized,
+    labelFormatter:  (v) => String(Math.round(v)),
+    labelFontScale,
+  });
+
+  // Lateral G gauge: 0–1.5 G (shows cornering intensity).
+  // Computed from state.body.lateralAccel in px/s² → converted to G.
+  const lateralG       = Math.abs(state.body.lateralAccel) / (9.8 * 10); // px/s² ÷ (g × px/m)
+  const lateralGMax    = 1.5;
+  const latGNormalized = latGNeedle.step(lateralG / lateralGMax);
+  drawAnalogGauge(latGCtx, latGCanvas.width, latGCanvas.height, {
+    value:           lateralG,
+    min:             0,
+    max:             lateralGMax,
+    title:           'LAT G',
+    subtitle:        'g-force',
+    majorStep:       0.5,
+    minorDivisions:  5,
+    redFrom:         1.0,
+    needleNormalized: latGNormalized,
+    labelFormatter:  (v) => v.toFixed(1),
+    labelFontScale,
   });
 }
 
+
+// =============================================================
+// START
+// =============================================================
+
+// Kick off the game loop.
 requestAnimationFrame(mainLoop);
