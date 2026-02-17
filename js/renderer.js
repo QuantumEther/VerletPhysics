@@ -1,645 +1,559 @@
 // =============================================================
-// RENDERER — all canvas drawing
+// RENDERER — all canvas drawing: world (checkerboard, trails,
+//            ball, motion blur) + screen-space HUD (steering,
+//            gauges, throttle indicator)
 // =============================================================
-// Two render passes per frame:
+// The renderer is split into world-space and screen-space phases.
 //
-//   WORLD SPACE (camera transform applied):
-//     1. Checkerboard background (with optional motion blur)
-//     2. Map boundary rectangle
-//     3. Trail arrows
-//     4. Car body rectangle
+// WORLD SPACE (affected by camera transform):
+//   1. Checkerboard background (with speed-based motion blur)
+//   2. Trail arrows
+//   3. Ball (with configurable motion blur)
+//   4. Map boundary walls
 //
-//   SCREEN SPACE (no transform, pixel-exact HUD):
-//     5. Steering wheel indicator
-//     6. Throttle bar
-//     7. Brake bar
-//     8. Clutch pedal bar (with bite zone marked)
-//     9. Gear indicator (large character)
-//
-//   GAUGE CANVASES (separate canvas elements):
-//    10. Tachometer (0–7000 RPM, redline at 6500)
-//    11. Speedometer (0–200 km/h)
-//    12. Third canvas: used as a lateral-G gauge (0–1.5 G)
-//
-// Each function is self-contained. A failure in one does not affect others.
+// SCREEN SPACE (drawn after camera transform is removed):
+//   1. Steering wheel HUD
+//   2. Throttle bar indicator
+//   3. Analog gauges (on separate canvases)
 // =============================================================
 
 import state from './state.js';
 import {
-  CAR_HALF_WIDTH,
-  CAR_HALF_LENGTH,
-  CHECKERBOARD_TILE_SIZE_PX,
-  CLUTCH_BITE_POINT,
-  CLUTCH_BITE_RANGE,
-  KPH_TO_PX_PER_SEC,
-  NEEDLE_STIFFNESS,
-  NEEDLE_DAMPING,
-  NEEDLE_RISE_BOOST,
-  NEEDLE_FALL_BOOST,
-  NEEDLE_FLUTTER_THRESHOLD,
+  BALL_RADIUS,
+  CHECKERBOARD_TILE_SIZE,
 } from './constants.js';
 
 
 // =============================================================
 // CAMERA TRANSFORM
 // =============================================================
+// Applies the camera translation and zoom so that all subsequent
+// draw calls are in world coordinates. The camera center is placed
+// at the center of the viewport.
+// =============================================================
 
-// Applies the camera transform to ctx before drawing world-space content.
-// After this call, canvas coordinates match world coordinates scaled and
-// offset by the camera's position and zoom.
+/**
+ * Apply camera transform to the context.
+ * After calling this, all draw calls use world coordinates.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} viewportWidth  - CSS-pixel width of the viewport
+ * @param {number} viewportHeight - CSS-pixel height of the viewport
+ */
 export function applyCameraTransform(ctx, viewportWidth, viewportHeight) {
+  const cam = state.camera;
   ctx.save();
-  // Move origin to viewport centre so the car appears in the middle of the screen.
-  ctx.translate(viewportWidth * 0.5, viewportHeight * 0.5);
-  // Scale by zoom (< 1 = zoomed out, = 1 = normal).
-  ctx.scale(state.camera.zoom, state.camera.zoom);
-  // Offset so the camera's world position is at the viewport centre.
-  ctx.translate(-state.camera.x, -state.camera.y);
+  // Move origin to viewport center, apply zoom, then offset by camera position
+  ctx.translate(viewportWidth / 2, viewportHeight / 2);
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-cam.x, -cam.y);
 }
 
-// Restores the context to the state before applyCameraTransform.
-// Must be called before drawing screen-space HUD elements.
+/**
+ * Remove camera transform (restores to screen space).
+ * @param {CanvasRenderingContext2D} ctx
+ */
 export function removeCameraTransform(ctx) {
   ctx.restore();
 }
 
 
 // =============================================================
-// CHECKERBOARD BACKGROUND
+// CHECKERBOARD BACKGROUND (with motion blur)
+// =============================================================
+// Draws a tiled checkerboard across the visible portion of the
+// world. When the ball is moving fast, the checkerboard is drawn
+// multiple times at offset positions with reduced alpha, creating
+// a directional motion blur effect.
 // =============================================================
 
-// Draws the tiled checkerboard pattern, with an optional motion-blur effect
-// that trails behind the car's movement direction.
-// Only tiles visible in the current viewport + camera margin are drawn.
+/**
+ * Draw the checkerboard background with optional motion blur.
+ *
+ * @param {CanvasRenderingContext2D} ctx - already has camera transform applied
+ * @param {number} viewportWidth
+ * @param {number} viewportHeight
+ */
 export function drawCheckerboard(ctx, viewportWidth, viewportHeight) {
-  const camera = state.camera;
-  const body   = state.body;
+  const cam = state.camera;
+  const speed = Math.hypot(state.velocity.x, state.velocity.y);
   const params = state.params;
-  const tile   = CHECKERBOARD_TILE_SIZE_PX;
+  const tileSize = CHECKERBOARD_TILE_SIZE;
 
-  // How many tile widths the viewport covers (accounting for zoom).
-  const tilesAcross = (viewportWidth  / camera.zoom / tile) + 2;
-  const tilesDown   = (viewportHeight / camera.zoom / tile) + 2;
+  // Calculate visible world region (accounting for zoom)
+  const halfW = (viewportWidth / 2) / cam.zoom;
+  const halfH = (viewportHeight / 2) / cam.zoom;
+  const visibleLeft   = cam.x - halfW - tileSize;
+  const visibleTop    = cam.y - halfH - tileSize;
+  const visibleRight  = cam.x + halfW + tileSize;
+  const visibleBottom = cam.y + halfH + tileSize;
 
-  // Top-left visible tile index.
-  const startTileX = Math.floor((camera.x - viewportWidth  * 0.5 / camera.zoom) / tile) - 1;
-  const startTileY = Math.floor((camera.y - viewportHeight * 0.5 / camera.zoom) / tile) - 1;
+  // Snap to tile grid
+  const startCol = Math.floor(visibleLeft / tileSize);
+  const endCol   = Math.ceil(visibleRight / tileSize);
+  const startRow = Math.floor(visibleTop / tileSize);
+  const endRow   = Math.ceil(visibleBottom / tileSize);
 
-  // Motion blur: draw the checkerboard several times with decreasing alpha,
-  // offset opposite to the velocity direction so it looks like the ground is
-  // blurring behind the car (like motion blur in photography).
-  const speed       = body.speed;
-  const blurSamples = params.motionBlurSamples;
-  const blurIntensity = params.motionBlurIntensity;
+  // ---- Motion blur passes ----
+  const blurEnabled = speed > params.motionBlurThreshold;
+  const blurSamples = blurEnabled ? Math.max(1, Math.round(params.motionBlurSamples)) : 1;
+  const blurIntensity = blurEnabled ? params.motionBlurIntensity : 1.0;
 
-  let sampleCount = 1;
-  let blurOffsetPerSample = 0;
+  // Blur offset direction (opposite to velocity)
+  const velDirX = speed > 1 ? -state.velocity.x / speed : 0;
+  const velDirY = speed > 1 ? -state.velocity.y / speed : 0;
 
-  if (speed > params.motionBlurThreshold && blurSamples > 1) {
-    sampleCount          = blurSamples;
-    blurOffsetPerSample  = Math.min(speed * 0.025, 8); // px per sample, world space
-  }
+  // Maximum blur offset scales with speed
+  const maxBlurOffset = blurEnabled ? Math.min(speed * 0.08, 60) : 0;
 
-  for (let sample = sampleCount - 1; sample >= 0; sample--) {
-    // Earlier samples (larger index) are more transparent and further behind.
-    const sampleAlpha = sample === 0
-      ? 1.0
-      : blurIntensity * (1 - sample / sampleCount);
+  for (let pass = 0; pass < blurSamples; pass++) {
+    const passRatio = blurSamples > 1 ? pass / (blurSamples - 1) : 0;
+    const offsetX = velDirX * maxBlurOffset * passRatio;
+    const offsetY = velDirY * maxBlurOffset * passRatio;
 
-    // Offset opposite to velocity.
-    const invSpeed = speed > 0.001 ? 1 / speed : 0;
-    const offsetX  = -body.velocityX * invSpeed * blurOffsetPerSample * sample;
-    const offsetY  = -body.velocityY * invSpeed * blurOffsetPerSample * sample;
+    // Alpha decreases for older ghost passes
+    const passAlpha = blurEnabled
+      ? (1.0 / blurSamples) * blurIntensity * (1 - passRatio * 0.5)
+      : 1.0;
 
-    ctx.globalAlpha = sampleAlpha;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, passAlpha);
+    ctx.translate(offsetX, offsetY);
 
-    for (let col = 0; col <= tilesAcross; col++) {
-      for (let row = 0; row <= tilesDown; row++) {
-        const tileX     = (startTileX + col) * tile + offsetX;
-        const tileY     = (startTileY + row) * tile + offsetY;
-        const isLight   = (startTileX + col + startTileY + row) % 2 === 0;
-        ctx.fillStyle   = isLight ? '#d4c5a9' : '#c0af90';
-        ctx.fillRect(tileX, tileY, tile, tile);
+    // Draw tiles
+    for (let row = startRow; row <= endRow; row++) {
+      for (let col = startCol; col <= endCol; col++) {
+        const isLight = (row + col) % 2 === 0;
+        ctx.fillStyle = isLight ? '#1a2030' : '#151b28';
+        ctx.fillRect(col * tileSize, row * tileSize, tileSize, tileSize);
       }
     }
-  }
 
-  ctx.globalAlpha = 1.0;
+    ctx.restore();
+
+    // Only the first pass draws at full alpha when blur is off
+    if (!blurEnabled) break;
+  }
 }
 
 
 // =============================================================
-// MAP BOUNDARY
+// MAP BOUNDARY WALLS
+// =============================================================
+// Draws the world boundary as a visible border so the player
+// can see where the edges are.
 // =============================================================
 
-// Draws a dashed rectangle marking the edge of the driveable area.
+/**
+ * Draw the map boundary rectangle.
+ * @param {CanvasRenderingContext2D} ctx - with camera transform applied
+ */
 export function drawMapBoundary(ctx) {
-  const params = state.params;
+  const mapW = state.params.mapWidth;
+  const mapH = state.params.mapHeight;
+
   ctx.save();
-  ctx.strokeStyle = 'rgba(80, 80, 80, 0.6)';
-  ctx.lineWidth   = 3;
-  ctx.setLineDash([20, 12]);
-  ctx.strokeRect(0, 0, params.mapWidth, params.mapHeight);
+  ctx.strokeStyle = 'rgba(232, 196, 74, 0.4)';
+  ctx.lineWidth = 4;
+  ctx.setLineDash([20, 10]);
+  ctx.strokeRect(0, 0, mapW, mapH);
   ctx.setLineDash([]);
   ctx.restore();
 }
 
 
 // =============================================================
-// CAR BODY
+// BALL RENDERING (with configurable motion blur)
 // =============================================================
 
-// Draws the car as a filled rectangle centred on body.centerX/Y
-// and rotated to body.heading. Also draws a windshield strip and
-// a heading marker line at the front to show orientation clearly.
-//
-// The four Verlet wheel particles are physics-only; they are not drawn here.
-// The visual rectangle is derived from the body's computed centre and heading.
-export function drawCar(ctx) {
-  const body    = state.body;
-  const engine  = state.engine;
+/**
+ * Draw the ball with optional motion blur ghost copies.
+ * The number of samples, intensity, and speed threshold are
+ * all controlled by sliders.
+ *
+ * @param {CanvasRenderingContext2D} ctx - with camera transform applied
+ */
+export function drawBall(ctx) {
+  const speed = Math.hypot(state.velocity.x, state.velocity.y);
+  const params = state.params;
+  const blurEnabled = speed > params.motionBlurThreshold;
 
+  if (blurEnabled) {
+    const samples = Math.max(1, Math.round(params.motionBlurSamples));
+    const blurDistance = Math.min(speed * 0.06, 50);
+    const dirX = speed > 1 ? -state.velocity.x / speed : 0;
+    const dirY = speed > 1 ? -state.velocity.y / speed : 0;
+
+    // Draw ghost copies behind the ball (oldest = farthest, most transparent)
+    for (let i = samples; i >= 1; i--) {
+      const ratio = i / samples;
+      const alpha = (params.motionBlurIntensity * 0.15) / (i * 0.5);
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.4, alpha);
+      ctx.translate(dirX * blurDistance * ratio, dirY * blurDistance * ratio);
+      drawBallGeometry(ctx, state.carHeading);
+      ctx.restore();
+    }
+  }
+
+  // Draw the main ball at full opacity
+  drawBallGeometry(ctx, state.carHeading);
+}
+
+/**
+ * Internal: draw ball geometry at current state.ball position.
+ * Separated so it can be called multiple times for motion blur.
+ */
+function drawBallGeometry(ctx, heading) {
   ctx.save();
-  ctx.translate(body.centerX, body.centerY);
-  ctx.rotate(body.heading);
+  ctx.translate(state.ball.x, state.ball.y);
+  ctx.rotate(heading);
 
-  // Drop shadow for depth.
-  ctx.shadowColor   = 'rgba(0, 0, 0, 0.4)';
-  ctx.shadowBlur    = 8;
-  ctx.shadowOffsetX = 3;
-  ctx.shadowOffsetY = 3;
-
-  // Car body: yellow rectangle.
-  ctx.fillStyle = '#ffd966';
-  ctx.fillRect(-CAR_HALF_WIDTH, -CAR_HALF_LENGTH,
-               CAR_HALF_WIDTH * 2, CAR_HALF_LENGTH * 2);
-
-  // Clear shadow for subsequent detail elements.
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur  = 0;
-
-  // Windshield strip near the front of the car (light blue-grey tint).
-  const windshieldHeight = CAR_HALF_LENGTH * 0.3;
-  ctx.fillStyle = 'rgba(140, 195, 230, 0.45)';
-  ctx.fillRect(-CAR_HALF_WIDTH + 4, -CAR_HALF_LENGTH,
-               CAR_HALF_WIDTH * 2 - 8, windshieldHeight);
-
-  // Heading marker line across the very front edge of the car (red).
-  // This makes the car's orientation immediately obvious.
-  ctx.strokeStyle = '#c0392b';
-  ctx.lineWidth   = 3;
-  ctx.lineCap     = 'butt';
+  // Drop shadow
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 14;
+  ctx.shadowOffsetX = 4;
+  ctx.shadowOffsetY = 4;
   ctx.beginPath();
-  ctx.moveTo(-CAR_HALF_WIDTH + 2, -CAR_HALF_LENGTH);
-  ctx.lineTo( CAR_HALF_WIDTH - 2, -CAR_HALF_LENGTH);
+  ctx.arc(0, 0, BALL_RADIUS, 0, 2 * Math.PI);
+  ctx.fillStyle = '#ffd966';
+  ctx.fill();
+
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
+
+  // Radial highlight
+  const highlightGradient = ctx.createRadialGradient(
+    -BALL_RADIUS * 0.3, -BALL_RADIUS * 0.3, 0,
+    0, 0, BALL_RADIUS
+  );
+  highlightGradient.addColorStop(0, 'rgba(255,255,255,0.25)');
+  highlightGradient.addColorStop(0.6, 'rgba(255,255,255,0)');
+  ctx.beginPath();
+  ctx.arc(0, 0, BALL_RADIUS, 0, 2 * Math.PI);
+  ctx.fillStyle = highlightGradient;
+  ctx.fill();
+
+  // Border ring
+  ctx.beginPath();
+  ctx.arc(0, 0, BALL_RADIUS, 0, 2 * Math.PI);
+  ctx.strokeStyle = '#b38f40';
+  ctx.lineWidth = 3;
   ctx.stroke();
 
-  // Car outline to give a clean border.
-  ctx.strokeStyle = '#b38f40';
-  ctx.lineWidth   = 1.5;
-  ctx.strokeRect(-CAR_HALF_WIDTH, -CAR_HALF_LENGTH,
-                 CAR_HALF_WIDTH * 2, CAR_HALF_LENGTH * 2);
+  // "A" letter
+  ctx.font = 'bold 28px "JetBrains Mono", monospace';
+  ctx.fillStyle = '#3d2b1a';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('A', 0, 1);
 
-  // Stall indicator: red tint over the whole car when engine is stalled.
-  if (engine.isStalled) {
-    ctx.fillStyle = 'rgba(200, 50, 50, 0.25)';
-    ctx.fillRect(-CAR_HALF_WIDTH, -CAR_HALF_LENGTH,
-                 CAR_HALF_WIDTH * 2, CAR_HALF_LENGTH * 2);
-  }
+  // Red heading indicator
+  ctx.beginPath();
+  ctx.moveTo(BALL_RADIUS * 0.6, 0);
+  ctx.lineTo(BALL_RADIUS * 0.95, 0);
+  ctx.strokeStyle = 'rgba(200, 50, 30, 0.7)';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.stroke();
 
   ctx.restore();
 }
 
 
 // =============================================================
-// HUD — STEERING WHEEL
+// STEERING WHEEL HUD (screen space)
 // =============================================================
 
-// Draws a small steering wheel icon in the lower-right corner of the screen.
-// The wheel rotates with the visual steering angle.
-export function drawSteeringWheelHud(ctx, canvasWidth, canvasHeight) {
-  const wheelRadius = 30;
-  const marginRight  = 60;
-  const marginBottom = 60;
-  const centreX = canvasWidth  - marginRight;
-  const centreY = canvasHeight - marginBottom;
+export function drawSteeringWheel(ctx, canvasWidth, canvasHeight) {
+  const centerX = canvasWidth - 70;
+  const centerY = canvasHeight - 70;
+  const radius = 30;
 
   ctx.save();
-  ctx.translate(centreX, centreY);
+  ctx.translate(centerX, centerY);
   ctx.rotate(state.steering.wheelAngle);
 
-  // Outer ring.
   ctx.beginPath();
-  ctx.arc(0, 0, wheelRadius, 0, Math.PI * 2);
-  ctx.strokeStyle = '#ccc';
-  ctx.lineWidth   = 3;
-  ctx.stroke();
-
-  // Crosshair spokes.
-  ctx.strokeStyle = '#ccc';
-  ctx.lineWidth   = 2;
-  for (let angle = 0; angle < Math.PI * 2; angle += Math.PI * 0.5) {
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(Math.cos(angle) * wheelRadius * 0.7, Math.sin(angle) * wheelRadius * 0.7);
-    ctx.stroke();
-  }
-
-  // Red dot at the 12 o'clock position to show absolute rotation.
-  ctx.beginPath();
-  ctx.arc(0, -wheelRadius * 0.7, 4, 0, Math.PI * 2);
-  ctx.fillStyle = '#e74c3c';
+  ctx.arc(0, 0, radius, 0, 2 * Math.PI);
+  ctx.fillStyle = 'rgba(20,20,30,0.9)';
+  ctx.shadowColor = 'rgba(0,0,0,0.7)';
+  ctx.shadowBlur = 8;
   ctx.fill();
-
-  // Centre hub.
-  ctx.beginPath();
-  ctx.arc(0, 0, 5, 0, Math.PI * 2);
-  ctx.fillStyle = '#aaa';
-  ctx.fill();
-
-  ctx.restore();
-}
-
-
-// =============================================================
-// HUD — THROTTLE BAR
-// =============================================================
-
-// Draws a vertical bar showing current throttle position.
-// Full height = 100% throttle. Colour shifts warm as throttle increases.
-export function drawThrottleBar(ctx, canvasWidth, canvasHeight) {
-  const input  = state.input;
-  let throttle = 0;
-  if (input.mouseThrottleActive) {
-    throttle = input.mouseThrottleAmount;
-  } else if (input.throttleKeyHeld) {
-    throttle = 1.0;
-  }
-
-  const barWidth  = 16;
-  const barHeight = 80;
-  const marginRight  = 100;
-  const marginBottom = 30;
-  const barLeft = canvasWidth  - marginRight;
-  const barTop  = canvasHeight - marginBottom - barHeight;
-
-  // Background (empty bar).
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-  ctx.fillRect(barLeft, barTop, barWidth, barHeight);
-
-  // Fill level.
-  const fillHeight = barHeight * throttle;
-  let barColor;
-  if (throttle < 0.5) {
-    barColor = `rgb(0, ${Math.round(180 + 60 * throttle * 2)}, ${Math.round(220 * (1 - throttle * 2))})`;
-  } else if (throttle < 0.8) {
-    const fraction = (throttle - 0.5) / 0.3;
-    barColor = `rgb(${Math.round(255 * fraction)}, ${Math.round(240 - 80 * fraction)}, 0)`;
-  } else {
-    barColor = '#e74c3c';
-  }
-  ctx.fillStyle = barColor;
-  ctx.fillRect(barLeft, barTop + barHeight - fillHeight, barWidth, fillHeight);
-
-  // Border.
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.lineWidth   = 1;
-  ctx.strokeRect(barLeft, barTop, barWidth, barHeight);
-
-  // Label.
-  ctx.fillStyle  = 'rgba(255,255,255,0.7)';
-  ctx.font       = '10px monospace';
-  ctx.textAlign  = 'center';
-  ctx.fillText('THR', barLeft + barWidth * 0.5, barTop - 6);
-}
-
-
-// =============================================================
-// HUD — BRAKE BAR
-// =============================================================
-
-// Draws a vertical bar showing brake pedal state (binary: off / full).
-export function drawBrakeBar(ctx, canvasWidth, canvasHeight) {
-  const brakeAmount = state.input.brakeKeyHeld ? 1.0 : 0.0;
-
-  const barWidth  = 16;
-  const barHeight = 80;
-  const marginRight  = 122;  // left of throttle bar
-  const marginBottom = 30;
-  const barLeft = canvasWidth  - marginRight;
-  const barTop  = canvasHeight - marginBottom - barHeight;
-
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-  ctx.fillRect(barLeft, barTop, barWidth, barHeight);
-
-  const fillHeight = barHeight * brakeAmount;
-  ctx.fillStyle = brakeAmount > 0 ? '#e74c3c' : 'rgba(255,255,255,0.1)';
-  ctx.fillRect(barLeft, barTop + barHeight - fillHeight, barWidth, fillHeight);
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.lineWidth   = 1;
-  ctx.strokeRect(barLeft, barTop, barWidth, barHeight);
-
-  ctx.fillStyle  = 'rgba(255,255,255,0.7)';
-  ctx.font       = '10px monospace';
-  ctx.textAlign  = 'center';
-  ctx.fillText('BRK', barLeft + barWidth * 0.5, barTop - 6);
-}
-
-
-// =============================================================
-// HUD — CLUTCH BAR
-// =============================================================
-
-// Draws a vertical bar showing the clutch pedal position.
-// The bite zone is marked with two horizontal lines so the driver can
-// see where engagement begins (bottom line) and where it is fully engaged
-// (top line). Between the lines is where the car responds to clutch control.
-//
-// Bar fill from bottom = pedal released (engaged).
-// Bar empty = pedal on floor (disengaged).
-export function drawClutchBar(ctx, canvasWidth, canvasHeight) {
-  const engine    = state.engine;
-  const params    = state.params;
-
-  const pedalPosition = engine.clutchPedalPosition; // 0 = floor, 1 = released
-
-  const barWidth  = 16;
-  const barHeight = 80;
-  const marginRight  = 144; // left of brake bar
-  const marginBottom = 30;
-  const barLeft = canvasWidth  - marginRight;
-  const barTop  = canvasHeight - marginBottom - barHeight;
-
-  // Background.
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-  ctx.fillRect(barLeft, barTop, barWidth, barHeight);
-
-  // Fill: pedal position (0 = bottom = disengaged, 1 = full height = released/engaged).
-  const fillHeight = barHeight * pedalPosition;
-  ctx.fillStyle = 'rgba(100, 200, 255, 0.7)';
-  ctx.fillRect(barLeft, barTop + barHeight - fillHeight, barWidth, fillHeight);
-
-  // Bite zone markers: two horizontal lines showing where grip starts and ends.
-  // Bottom line = bitePoint (engagement begins).
-  // Top line = bitePoint + biteRange (fully engaged above here).
-  const bitePoint     = params.clutchBitePoint;
-  const biteRange     = params.clutchBiteRange;
-  const biteTopY      = barTop + barHeight * (1 - (bitePoint + biteRange));
-  const biteBottomY   = barTop + barHeight * (1 - bitePoint);
-
-  // Yellow zone between the bite lines.
-  ctx.fillStyle = 'rgba(255, 220, 0, 0.25)';
-  ctx.fillRect(barLeft, biteTopY, barWidth, biteBottomY - biteTopY);
-
-  // Bite zone border lines.
-  ctx.strokeStyle = '#f1c40f';
-  ctx.lineWidth   = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(barLeft, biteTopY);
-  ctx.lineTo(barLeft + barWidth, biteTopY);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(barLeft, biteBottomY);
-  ctx.lineTo(barLeft + barWidth, biteBottomY);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#e8c44a';
+  ctx.lineWidth = 2;
   ctx.stroke();
 
-  // Bar border.
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.lineWidth   = 1;
-  ctx.strokeRect(barLeft, barTop, barWidth, barHeight);
-
-  // Label.
-  ctx.fillStyle  = 'rgba(255,255,255,0.7)';
-  ctx.font       = '10px monospace';
-  ctx.textAlign  = 'center';
-  ctx.fillText('CLT', barLeft + barWidth * 0.5, barTop - 6);
-}
-
-
-// =============================================================
-// HUD — GEAR INDICATOR
-// =============================================================
-
-// Draws a large character showing the current gear.
-// Positioned in the lower-left corner of the screen.
-// Colour: green for 1–6, white for Neutral, red for Reverse.
-export function drawGearIndicator(ctx, canvasWidth, canvasHeight) {
-  const gear        = state.engine.currentGear;
-  const isStalled   = state.engine.isStalled;
-
-  let gearColor;
-  if (isStalled) {
-    gearColor = '#e74c3c'; // red when stalled
-  } else if (gear === 'N') {
-    gearColor = 'rgba(255,255,255,0.85)';
-  } else if (gear === 'R') {
-    gearColor = '#e67e22'; // orange for reverse
-  } else {
-    gearColor = '#2ecc71'; // green for forward gears
-  }
-
-  const displayChar = isStalled ? 'STALL' : gear;
-
-  ctx.save();
-  ctx.font         = isStalled ? 'bold 20px monospace' : 'bold 52px monospace';
-  ctx.fillStyle    = gearColor;
-  ctx.textAlign    = 'left';
-  ctx.textBaseline = 'bottom';
-  // Add a subtle shadow for readability on the checkerboard.
-  ctx.shadowColor  = 'rgba(0,0,0,0.6)';
-  ctx.shadowBlur   = 4;
-  ctx.fillText(displayChar, 20, canvasHeight - 20);
-  ctx.restore();
-}
-
-
-// =============================================================
-// ANALOG GAUGE
-// =============================================================
-
-// Draws a complete analog gauge on a separate canvas context.
-// This is the generic gauge renderer used for tachometer, speedometer,
-// and any other gauge. Each gauge is independent — a failure here
-// affects only that canvas, not the simulation.
-//
-// config: {
-//   value:          current reading (in gauge units)
-//   min:            minimum scale value
-//   max:            maximum scale value
-//   title:          text below the needle pivot
-//   subtitle:       smaller text below title (e.g., "km/h")
-//   majorStep:      interval between major tick marks with labels
-//   minorDivisions: how many minor ticks between each major tick
-//   redFrom:        gauge value at which the red zone begins (null = no red zone)
-//   needleNormalized: 0–1 normalised position from the needle physics spring
-//   labelFormatter: function(value) → string for major tick labels
-//   labelFontScale: multiplier for tick label font size (from params.gaugeLabelScale)
-// }
-export function drawAnalogGauge(ctx, canvasWidth, canvasHeight, config) {
-  const {
-    value,
-    min,
-    max,
-    title,
-    subtitle,
-    majorStep,
-    minorDivisions,
-    redFrom,
-    needleNormalized,
-    labelFormatter,
-    labelFontScale,
-  } = config;
-
-  const centreX = canvasWidth  * 0.5;
-  const centreY = canvasHeight * 0.55;
-  const radius  = Math.min(canvasWidth, canvasHeight) * 0.40;
-
-  // Gauge sweep: from 225° to −45° (clockwise), i.e., 270° of arc.
-  const startAngle = (225 / 180) * Math.PI;
-  const endAngle   = (-45  / 180) * Math.PI;
-  const sweepAngle = Math.PI * 1.5; // 270° in radians
-
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-  // --- Face background ---
-  const faceGradient = ctx.createRadialGradient(centreX, centreY, 0, centreX, centreY, radius);
-  faceGradient.addColorStop(0, '#f5f0e8');
-  faceGradient.addColorStop(1, '#d9c9a8');
   ctx.beginPath();
-  ctx.arc(centreX, centreY, radius, 0, Math.PI * 2);
-  ctx.fillStyle = faceGradient;
-  ctx.fill();
-
-  // Face border.
-  ctx.strokeStyle = '#5a4a2a';
-  ctx.lineWidth   = 2.5;
+  ctx.moveTo(-radius, 0);
+  ctx.lineTo(radius, 0);
+  ctx.moveTo(0, -radius);
+  ctx.lineTo(0, radius);
+  ctx.strokeStyle = '#e8c44a';
+  ctx.lineWidth = 2;
   ctx.stroke();
 
-  // --- Red zone ---
-  if (redFrom !== null && redFrom < max) {
-    const redStartAngle = startAngle + sweepAngle * ((redFrom - min) / (max - min));
-    ctx.beginPath();
-    ctx.arc(centreX, centreY, radius * 0.85, redStartAngle, endAngle);
-    ctx.arc(centreX, centreY, radius * 0.70, endAngle, redStartAngle, true);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(200, 40, 40, 0.35)';
-    ctx.fill();
-  }
-
-  // --- Tick marks and labels ---
-  const totalRange = max - min;
-  const majorCount = Math.round(totalRange / majorStep);
-
-  for (let major = 0; major <= majorCount; major++) {
-    const majorValue = min + major * majorStep;
-    const majorAngle = startAngle + sweepAngle * (major / majorCount);
-
-    // Major tick.
-    const outerR  = radius * 0.90;
-    const innerR  = radius * 0.75;
-    const labelR  = radius * 0.60;
-
-    ctx.save();
-    ctx.translate(centreX, centreY);
-    ctx.rotate(majorAngle);
-
-    ctx.beginPath();
-    ctx.moveTo(0, -innerR);
-    ctx.lineTo(0, -outerR);
-    ctx.strokeStyle = '#3a2a0a';
-    ctx.lineWidth   = 2;
-    ctx.stroke();
-
-    // Label at major tick.
-    ctx.rotate(-majorAngle); // un-rotate for text
-    const labelX = Math.cos(majorAngle - Math.PI * 0.5) * labelR;
-    const labelY = Math.sin(majorAngle - Math.PI * 0.5) * labelR;
-    const fontSize = Math.round(radius * 0.12 * (labelFontScale || 1.0));
-    ctx.font       = `${fontSize}px sans-serif`;
-    ctx.fillStyle  = '#2a1a00';
-    ctx.textAlign  = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(labelFormatter ? labelFormatter(majorValue) : String(majorValue),
-                 labelX, labelY);
-
-    // Minor ticks between major ticks (skip on last major).
-    if (major < majorCount && minorDivisions > 1) {
-      for (let minor = 1; minor < minorDivisions; minor++) {
-        const minorAngle = majorAngle + sweepAngle * (minor / minorDivisions / majorCount);
-        ctx.save();
-        ctx.rotate(minorAngle);
-        ctx.beginPath();
-        ctx.moveTo(0, -outerR);
-        ctx.lineTo(0, -(outerR - (outerR - innerR) * 0.5));
-        ctx.strokeStyle = '#5a4a2a';
-        ctx.lineWidth   = 1;
-        ctx.stroke();
-        ctx.restore();
-        ctx.rotate(-minorAngle + majorAngle); // compensate parent rotate
-      }
-    }
-
-    ctx.restore();
-  }
-
-  // --- Needle ---
-  const needleAngle = startAngle + sweepAngle * needleNormalized;
-
-  ctx.save();
-  ctx.translate(centreX, centreY);
-  ctx.rotate(needleAngle);
-
-  // Needle shadow.
-  ctx.shadowColor   = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur    = 4;
-  ctx.shadowOffsetX = 2;
-  ctx.shadowOffsetY = 2;
-
-  // Needle body: red, tapers to a point.
   ctx.beginPath();
-  ctx.moveTo(-3, 0);
-  ctx.lineTo(0, -(radius * 0.80)); // tip
-  ctx.lineTo(3, 0);
-  ctx.lineTo(0, radius * 0.15);    // tail counterweight
-  ctx.closePath();
+  ctx.arc(0, -radius + 4, 4, 0, 2 * Math.PI);
   ctx.fillStyle = '#c0392b';
   ctx.fill();
 
-  ctx.shadowColor = 'transparent';
-
-  // Pivot cap (circle at centre, covers needle base).
-  const pivotGradient = ctx.createRadialGradient(-2, -2, 1, 0, 0, 10);
-  pivotGradient.addColorStop(0, '#fff');
-  pivotGradient.addColorStop(1, '#888');
   ctx.beginPath();
-  ctx.arc(0, 0, 8, 0, Math.PI * 2);
-  ctx.fillStyle = pivotGradient;
+  ctx.arc(0, 0, 6, 0, 2 * Math.PI);
+  ctx.fillStyle = '#b38f40';
   ctx.fill();
 
   ctx.restore();
+}
 
-  // --- Title and subtitle ---
-  ctx.fillStyle  = '#2a1a00';
-  ctx.textAlign  = 'center';
 
-  const titleFontSize = Math.round(radius * 0.14);
-  ctx.font         = `bold ${titleFontSize}px sans-serif`;
-  ctx.textBaseline = 'bottom';
-  ctx.fillText(title, centreX, centreY + radius * 0.40);
+// =============================================================
+// THROTTLE BAR HUD (screen space)
+// =============================================================
+// Shows the current analog throttle amount as a vertical bar
+// next to the steering wheel.
+// =============================================================
 
-  const subtitleFontSize = Math.round(radius * 0.11);
-  ctx.font         = `${subtitleFontSize}px sans-serif`;
-  ctx.textBaseline = 'top';
-  ctx.fillText(subtitle, centreX, centreY + radius * 0.40);
+export function drawThrottleBar(ctx, canvasWidth, canvasHeight) {
+  const barWidth = 12;
+  const barHeight = 80;
+  const barX = canvasWidth - 120;
+  const barY = canvasHeight - 100;
 
-  // --- Vignette: darkened ring around the edge for realism ---
-  const vignetteGradient = ctx.createRadialGradient(centreX, centreY, radius * 0.6,
-                                                     centreX, centreY, radius);
-  vignetteGradient.addColorStop(0, 'rgba(0,0,0,0)');
-  vignetteGradient.addColorStop(1, 'rgba(0,0,0,0.15)');
+  // Determine current throttle amount
+  let throttle = 0;
+  if (state.input.mouseThrottleActive) {
+    throttle = state.input.mouseThrottleAmount;
+  } else if (state.input.throttlePressed) {
+    throttle = 1.0;
+  }
+
+  // Background
+  ctx.save();
+  ctx.fillStyle = 'rgba(20,20,30,0.8)';
+  ctx.strokeStyle = 'rgba(232,196,74,0.4)';
+  ctx.lineWidth = 1;
+  ctx.fillRect(barX, barY, barWidth, barHeight);
+  ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+  // Fill (from bottom up)
+  const fillHeight = barHeight * throttle;
+  const fillColor = throttle > 0.8 ? '#c0392b' : throttle > 0.5 ? '#e8c44a' : '#48d4e8';
+  ctx.fillStyle = fillColor;
+  ctx.fillRect(barX, barY + barHeight - fillHeight, barWidth, fillHeight);
+
+  // Label
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '9px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('THR', barX + barWidth / 2, barY - 4);
+
+  ctx.restore();
+}
+
+
+// =============================================================
+// ANALOG GAUGE RENDERING (unchanged from previous version)
+// =============================================================
+
+function roundRectPath(ctx, x, y, width, height, cornerRadius) {
+  const r = Math.min(cornerRadius, width / 2, height / 2);
   ctx.beginPath();
-  ctx.arc(centreX, centreY, radius, 0, Math.PI * 2);
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r);
+  ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r);
+  ctx.closePath();
+}
+
+export function drawAnalogGauge(ctx, canvasWidth, canvasHeight, config) {
+  const {
+    value, min, max, title, subtitle, unitRight,
+    majorStep, minorDiv, redFrom, labelFormatter,
+    labelFontScale = 1.0
+  } = config;
+
+  const W = canvasWidth;
+  const H = canvasHeight;
+
+  ctx.clearRect(0, 0, W, H);
+
+  const pad = Math.min(W, H) * 0.08;
+  const faceX = pad, faceY = pad;
+  const faceW = W - pad * 2, faceH = H - pad * 2;
+  const centerX = W * 0.50;
+  const centerY = H * 0.88;
+  const arcRadius = Math.min(W, H) * 0.42;
+  const arcStart = Math.PI * 1.05;
+  const arcEnd   = Math.PI * 1.95;
+
+  const angleForValue = (v) => {
+    const normalized = (v - min) / (max - min);
+    return arcStart + (arcEnd - arcStart) * Math.max(0, Math.min(1, normalized));
+  };
+
+  // Face background
+  const faceGradient = ctx.createRadialGradient(
+    centerX, centerY - arcRadius * 0.65, arcRadius * 0.25,
+    centerX, centerY, arcRadius * 1.6
+  );
+  faceGradient.addColorStop(0.00, '#fff2cf');
+  faceGradient.addColorStop(0.35, '#f4e6c2');
+  faceGradient.addColorStop(1.00, '#dec89a');
+  ctx.save();
+  roundRectPath(ctx, faceX, faceY, faceW, faceH, 30);
+  ctx.fillStyle = faceGradient;
+  ctx.fill();
+  ctx.restore();
+
+  // Paper grain
+  ctx.save();
+  ctx.globalAlpha = 0.08;
+  for (let i = 0; i < 520; i++) {
+    ctx.fillStyle = `rgba(30,20,10,${Math.random() * 0.06})`;
+    ctx.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+  }
+  ctx.restore();
+
+  // Arc groove
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, arcRadius, arcStart, arcEnd);
+  ctx.lineWidth = arcRadius * 0.12;
+  ctx.strokeStyle = 'rgba(0,0,0,0.10)';
+  ctx.stroke();
+  ctx.restore();
+
+  // Red zone
+  if (typeof redFrom === 'number') {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, arcRadius, angleForValue(redFrom), arcEnd);
+    ctx.lineWidth = arcRadius * 0.045;
+    ctx.strokeStyle = 'rgba(160,30,30,0.70)';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Tick marks
+  const majorCount = Math.floor((max - min) / majorStep);
+  const totalMinorTicks = majorCount * minorDiv;
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(20,20,20,0.78)';
+  ctx.lineCap = 'round';
+  for (let i = 0; i <= totalMinorTicks; i++) {
+    const tickValue = min + i * (majorStep / minorDiv);
+    const isMajor = (i % minorDiv === 0);
+    const angle = angleForValue(tickValue);
+    const innerRadius = isMajor ? arcRadius * 0.78 : arcRadius * 0.86;
+
+    ctx.lineWidth = isMajor ? 5 : 2.5;
+    ctx.beginPath();
+    ctx.moveTo(
+      centerX + Math.cos(angle) * innerRadius,
+      centerY + Math.sin(angle) * innerRadius
+    );
+    ctx.lineTo(
+      centerX + Math.cos(angle) * arcRadius,
+      centerY + Math.sin(angle) * arcRadius
+    );
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Major tick labels
+  ctx.save();
+  ctx.fillStyle = 'rgba(20,20,20,0.90)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const labelPixelSize = Math.round(
+    H * 0.055 * Math.max(0.4, Math.min(2.0, labelFontScale))
+  );
+  ctx.font = `800 ${labelPixelSize}px "JetBrains Mono", monospace`;
+  for (let i = 0; i <= majorCount; i++) {
+    const tickValue = min + i * majorStep;
+    const angle = angleForValue(tickValue);
+    ctx.fillText(
+      labelFormatter(tickValue),
+      centerX + Math.cos(angle) * arcRadius * 0.64,
+      centerY + Math.sin(angle) * arcRadius * 0.64
+    );
+  }
+  ctx.restore();
+
+  // Title and subtitle
+  ctx.save();
+  ctx.fillStyle = 'rgba(20,20,20,0.86)';
+  ctx.textAlign = 'center';
+  ctx.font = `900 ${Math.round(H * 0.075)}px "JetBrains Mono", monospace`;
+  ctx.fillText(title, centerX, H * 0.20);
+  ctx.font = `700 ${Math.round(H * 0.045)}px "JetBrains Mono", monospace`;
+  ctx.fillText(subtitle, centerX, H * 0.27);
+  ctx.textAlign = 'right';
+  ctx.font = `800 ${Math.round(H * 0.060)}px "JetBrains Mono", monospace`;
+  ctx.fillText(unitRight, W - pad * 1.15, H * 0.86);
+  ctx.restore();
+
+  // Needle
+  const needleAngle = angleForValue(value);
+  const needleTipX = centerX + Math.cos(needleAngle) * arcRadius * 0.92;
+  const needleTipY = centerY + Math.sin(needleAngle) * arcRadius * 0.92;
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+  ctx.lineWidth = 12;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(centerX + 6, centerY + 6);
+  ctx.lineTo(needleTipX + 6, needleTipY + 6);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = '#c0392b';
+  ctx.lineWidth = 9;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(centerX, centerY);
+  ctx.lineTo(needleTipX, needleTipY);
+  ctx.stroke();
+  ctx.restore();
+
+  // Pivot cap
+  ctx.save();
+  const capRadius = arcRadius * 0.07;
+  const capGradient = ctx.createRadialGradient(
+    centerX - capRadius * 0.2, centerY - capRadius * 0.2, capRadius * 0.2,
+    centerX, centerY, capRadius
+  );
+  capGradient.addColorStop(0, 'rgba(255,255,255,0.92)');
+  capGradient.addColorStop(0.45, 'rgba(180,180,180,0.96)');
+  capGradient.addColorStop(1, 'rgba(80,80,80,0.96)');
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, capRadius, 0, Math.PI * 2);
+  ctx.fillStyle = capGradient;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.stroke();
+  ctx.restore();
+
+  // Vignette
+  ctx.save();
+  const vignetteGradient = ctx.createRadialGradient(
+    centerX, centerY - arcRadius * 0.65, arcRadius * 0.25,
+    centerX, centerY, arcRadius * 1.7
+  );
+  vignetteGradient.addColorStop(0, 'rgba(255,255,255,0)');
+  vignetteGradient.addColorStop(0.65, 'rgba(255,255,255,0.03)');
+  vignetteGradient.addColorStop(1, 'rgba(0,0,0,0.12)');
+  roundRectPath(ctx, faceX, faceY, faceW, faceH, 30);
   ctx.fillStyle = vignetteGradient;
   ctx.fill();
+  ctx.restore();
 }
