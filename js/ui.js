@@ -134,6 +134,7 @@ export function initSliders() {
   const fmt2  = (v) => v.toFixed(2);
   const fmt3  = (v) => v.toFixed(3);
   const fmt4  = (v) => v.toFixed(4);
+  const fmt5  = (v) => v.toFixed(5);
   const fmtInt = (v) => String(Math.round(v));
   const fmtPct = (v) => (v * 100).toFixed(0) + '%';
   const parseFloat1 = (s) => parseFloat(s);
@@ -211,9 +212,6 @@ export function initSliders() {
     });
   }
 }
-
-// Helper: 5 decimal place formatter (for very small coefficients like aeroDragCoeff).
-function fmt5(v) { return v.toFixed(5); }
 
 
 // =============================================================

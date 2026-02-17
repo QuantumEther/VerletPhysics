@@ -138,6 +138,19 @@ initInput(simCanvas);
 // into state.params so physics starts with the correct parameters.
 initSliders();
 
+// Bind canvas resolution slider (not part of state.params, manual handler).
+const canvasResolutionSlider = document.getElementById('canvasResolutionSlider');
+const canvasResolutionValue  = document.getElementById('canvasResolutionValue');
+if (canvasResolutionSlider) {
+  const updateCanvasResolution = () => {
+    const scale = parseFloat(canvasResolutionSlider.value);
+    canvasResolutionValue.textContent = scale.toFixed(1);
+    // Canvas will be resized in renderFrame() when next drawn.
+  };
+  canvasResolutionSlider.addEventListener('input', updateCanvasResolution);
+  updateCanvasResolution();
+}
+
 // Create needle physics instances for each gauge.
 // These are independent spring-damper systems — one per gauge.
 const rpmNeedle  = createNeedlePhysics();
@@ -278,16 +291,35 @@ function runPhysicsStep(dt) {
 
 
 // =============================================================
+// HELPER: Canvas Resolution Scale
+// =============================================================
+
+// Get current canvas resolution scale from the slider (0.5 to 2.0).
+function getCanvasResolutionScale() {
+  if (canvasResolutionSlider) {
+    return parseFloat(canvasResolutionSlider.value);
+  }
+  return 1.0;
+}
+
+
+// =============================================================
 // RENDER FRAME
 // =============================================================
 
 // Draws one complete frame. Called once per animation frame regardless
 // of how many physics sub-steps ran this frame.
 function renderFrame() {
-  const canvasWidth  = simCanvas.clientWidth  || simCanvas.width;
-  const canvasHeight = simCanvas.clientHeight || simCanvas.height;
+  const cssWidth  = simCanvas.clientWidth  || simCanvas.width;
+  const cssHeight = simCanvas.clientHeight || simCanvas.height;
+  const resolutionScale = getCanvasResolutionScale();
 
-  // Match canvas buffer size to CSS display size (handles DPI differences).
+  // Scale canvas buffer by resolution slider (0.5× to 2.0×).
+  // This trades render quality for performance.
+  const canvasWidth  = Math.round(cssWidth  * resolutionScale);
+  const canvasHeight = Math.round(cssHeight * resolutionScale);
+
+  // Match canvas buffer size to scaled size.
   if (simCanvas.width  !== canvasWidth  ||
       simCanvas.height !== canvasHeight) {
     simCanvas.width  = canvasWidth;
