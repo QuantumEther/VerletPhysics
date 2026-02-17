@@ -233,11 +233,15 @@ export function computeWeightTransfer() {
 
   // Longitudinal transfer: braking shifts load forward; acceleration shifts it rearward.
   // Transfer = mass × longitudinal_accel × CoG_height / wheelbase
-  const longitudinalTransfer = massKg * body.longitudinalAccel * cogHeight / wheelbase;
+  // Clamp to ±2 g to prevent constraint-solver transients from causing runaway
+  // weight transfer that would amplify tire forces on the next step.
+  const clampedLongAccel = clamp(body.longitudinalAccel, -2 * GRAVITY, 2 * GRAVITY);
+  const longitudinalTransfer = massKg * clampedLongAccel * cogHeight / wheelbase;
 
   // Lateral transfer: cornering shifts load to the outside wheels.
   // Transfer = mass × lateral_accel × CoG_height / trackWidth
-  const lateralTransfer = massKg * body.lateralAccel * cogHeight / trackWidth;
+  const clampedLatAccel = clamp(body.lateralAccel, -2 * GRAVITY, 2 * GRAVITY);
+  const lateralTransfer = massKg * clampedLatAccel * cogHeight / trackWidth;
 
   // Each axle gets half the total weight, then longitudinal transfer shifts
   // weight between front and rear axles. Within each axle, lateral transfer
@@ -458,7 +462,13 @@ export function updateEngine(dt) {
 function pacejkaForce(normalLoad, frictionCoeff, slipValue, peakSlipValue, B, C) {
   if (peakSlipValue < 0.0001) return 0;
   const normalisedSlip = slipValue / peakSlipValue;
-  return normalLoad * frictionCoeff *
+  // Normalise so that at normalisedSlip = 1.0 (peak grip), the output equals
+  // exactly normalLoad × frictionCoeff.  Without this, sin(C × atan(B)) < 1
+  // means the tyre produces far less grip than the friction coefficient implies.
+  // peakNorm = sin(C × atan(B)) evaluated at normalisedSlip = 1.0.
+  const peakNorm = Math.sin(C * Math.atan(B));
+  if (peakNorm < 0.0001) return 0;
+  return (normalLoad * frictionCoeff / peakNorm) *
          Math.sin(C * Math.atan(B * normalisedSlip));
 }
 
@@ -621,8 +631,10 @@ export function computeTireForces() {
     // Log slip angles to understand tire saturation and lateral force generation.
     if (Math.abs(slipAngle) > 0.01) { // Only log if there's meaningful slip
       const slipAngleDeg = slipAngle * (180 / Math.PI);
-      const scaledLateralForce = lateralForceMag * frictionScale;
-      console.log(`[SLIP] ${name}: angle=${slipAngleDeg.toFixed(1)}° | lateralSpeed=${wheelLateralSpeed.toFixed(2)} m/s | normalLoad=${normalLoad.toFixed(0)} N | lateralForce=${scaledLateralForce.toFixed(0)} N`);
+      const maxGrip = normalLoad * frictionCoeff;
+      const scaledLateralMag = lateralForceMag * frictionScale;
+      const frictionPct = maxGrip > 0 ? (scaledLateralMag / maxGrip * 100).toFixed(0) : '?';
+      console.log(`[SLIP] ${name}: angle=${slipAngleDeg.toFixed(1)}° | latSpd=${wheelLateralSpeed.toFixed(2)} m/s | Fn=${normalLoad.toFixed(0)} N | Fy=${scaledLateralMag.toFixed(0)} N (${frictionPct}% grip) | scale=${frictionScale.toFixed(2)}`);
     }
   }
 

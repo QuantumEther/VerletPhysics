@@ -103,7 +103,11 @@ export function drawCheckerboard(ctx, viewportWidth, viewportHeight) {
 
   if (speed > params.motionBlurThreshold && blurSamples > 1) {
     sampleCount          = blurSamples;
-    blurOffsetPerSample  = Math.min(speed * 0.0025, 0.8); // metres per sample, world space
+    // Offset per sample in world-space metres. Each sample is drawn further
+    // behind the car to simulate photographic motion blur.
+    // 0.15 × speed gives ≈1.5 m at 10 m/s (36 km/h), ≈4 m at 100 km/h.
+    // Capped at 4.0 m so extreme speeds stay visually clean.
+    blurOffsetPerSample  = Math.min(speed * 0.15, 4.0); // metres per sample, world space
   }
 
   for (let sample = sampleCount - 1; sample >= 0; sample--) {

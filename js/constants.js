@@ -78,14 +78,16 @@ export const MAX_DISPLACEMENT_PER_STEP = CAR_HALF_WIDTH * 0.9; // 1.8 m
 // Default coefficient of restitution for wall collisions.
 export const DEFAULT_BOUNCINESS = 0.5;
 
-// Yaw damping coefficient (N·m·s/rad).
-// Applies counter-torque proportional to angular velocity: τ_damp = -yawDamping × I × ω
-// This opposes spinning and allows tuning between arcade drifting (low) and stable (high).
-// Typical range: 0.001–0.1
-//   0.001: minimal damping, car maintains spin indefinitely (pure arcade)
-//   0.02:  realistic (similar to air resistance on a real car)
-//   0.05+: stability control, hard to spin
-export const DEFAULT_YAW_DAMPING = 0.02; // N·m·s/rad
+// Yaw damping decay rate (1/s).
+// Applies counter-torque: τ_damp = -yawDamping × I × ω
+// Equivalently, α_damp = -yawDamping × ω, so this is how many rad/s of yaw the
+// system removes per second — a pure angular velocity decay rate.
+// Slider range: 0.0–5.0
+//   0.0:  no damping (spin persists forever — pure arcade chaos)
+//   1.0:  realistic aerodynamic-like damping (spin halves in ~0.7 s)
+//   3.0:  sporty stability control
+//   5.0:  heavy stability assist
+export const DEFAULT_YAW_DAMPING = 1.0; // 1/s
 
 // -------------------------------------------------------------
 // ENGINE

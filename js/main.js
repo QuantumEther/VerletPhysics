@@ -254,8 +254,13 @@ function runPhysicsStep(dt) {
 
   // === PHASE 2b YAW DAMPING ===
   // Apply counter-torque proportional to angular velocity.
-  // This opposes spinning, allowing tuning between arcade drifting and stable handling.
   // Formula: τ_damp = -yawDamping × I × ω
+  // Since α_damp = τ_damp / I = -yawDamping × ω, the parameter is a
+  // decay rate in 1/s — directly interpretable:
+  //   0.0 → undamped (spin persists forever)
+  //   1.0 → realistic (angular velocity halves in ~0.7 s, aerodynamic-like)
+  //   3.0 → sporty stability control
+  //   5.0 → heavy stability assist
   const massKg = state.params.carMassKg;
   const momentOfInertia = massKg * (CAR_HALF_LENGTH * CAR_HALF_LENGTH +
                                     CAR_HALF_WIDTH  * CAR_HALF_WIDTH) / 3;
@@ -421,7 +426,9 @@ function drawGauges() {
 
   // Lateral G gauge: 0–1.5 G (shows cornering intensity).
   // lateralAccel is in m/s²; divide by 9.81 to convert to g-force.
-  const lateralG       = Math.abs(state.body.lateralAccel) / 9.81;
+  // Clamp to 3 G max for display — physics can briefly spike higher during
+  // constraint solving but those transients shouldn't peg the needle.
+  const lateralG       = Math.min(Math.abs(state.body.lateralAccel) / 9.81, 3.0);
   const lateralGMax    = 1.5;
   const latGNormalized = latGNeedle.step(lateralG / lateralGMax);
   drawAnalogGauge(latGCtx, latGCanvas.width, latGCanvas.height, {

@@ -158,7 +158,7 @@ export function initSliders() {
   bind('cogHeight',             'cogHeight',             parseFloat1, fmt2);
   bind('bounciness',            'bounciness',            parseFloat1, fmt2);
   bind('stallResistance',       'stallResistance',       parseFloat1, fmt2);
-  bind('yawDamping',            'yawDamping',            parseFloat1, fmt3);
+  bind('yawDamping',            'yawDamping',            parseFloat1, fmt1);
 
   // ---- Clutch ----
   bind('clutchBitePoint',  'clutchBitePoint',  parseFloat1, fmt2);
@@ -268,7 +268,9 @@ export function updateInfoBar() {
   setInfoCell('gearDisplay', engine.currentGear);
 
   setInfoCell('headingDisplay',
-    `${(body.heading * 180 / Math.PI % 360 + 360).toFixed(0)}°`);
+    // Normalise to [0, 360): convert radians → degrees, mod 360, then add 360
+    // and mod again so negative headings also wrap into [0, 360).
+    `${(((body.heading * 180 / Math.PI) % 360) + 360) % 360}°`);
 
   setInfoCell('clutchDisplay',
     `${(engine.clutchEngagement * 100).toFixed(0)}%`);
