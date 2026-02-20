@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi‑Cylinder Engine Lab</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a1a;
+            color: #ffa500;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: #2a2a2a;
+            border: 2px solid #ffa500;
+            border-radius: 15px;
+            padding: 30px;
+            max-width: 1200px;
+            width: 100%;
+            box-shadow: 0 0 20px rgba(255,165,0,0.3);
+        }
+        h1 {
+            text-align: center;
+            margin-top: 0;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            border-bottom: 1px solid #ffa500;
+            padding-bottom: 10px;
+        }
+        .rpm-panel {
+            background: #000;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 1px solid #ffa500;
+        }
+        .rpm-value {
+            font-size: 3rem;
+            text-align: center;
+            font-weight: bold;
+            text-shadow: 0 0 10px #ffa500;
+            margin: 10px 0;
+        }
+        input[type=range] {
+            width: 100%;
+            height: 8px;
+            background: #333;
+            border-radius: 5px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #ffa500;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px #ffa500;
+        }
+        .cylinder-selector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin: 15px 0 0;
+            padding-top: 15px;
+            border-top: 1px solid #ffa500;
+        }
+        .cylinder-selector label {
+            font-size: 1.2rem;
+        }
+        .cylinder-selector select {
+            background: #2a2a2a;
+            color: #ffa500;
+            border: 2px solid #ffa500;
+            border-radius: 8px;
+            padding: 8px 15px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            cursor: pointer;
+            outline: none;
+        }
+        .cylinder-selector select:hover {
+            background: #ffa500;
+            color: #1a1a1a;
+        }
+        .graph-container {
+            background: #111;
+            border: 2px solid #ffa500;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .graph-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .graph-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+        .graph-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        .graph-buttons button {
+            background: #2a2a2a;
+            color: #ffa500;
+            border: 1px solid #ffa500;
+            border-radius: 5px;
+            padding: 5px 15px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .graph-buttons button:hover {
+            background: #ffa500;
+            color: #111;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            background: #222;
+            border: 1px solid #ffa500;
+            cursor: crosshair;
+            touch-action: none;
+        }
+        .time-display {
+            text-align: center;
+            margin-top: 5px;
+            font-size: 1rem;
+        }
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .control-section {
+            background: #1f1f1f;
+            border: 1px solid #ffa500;
+            border-radius: 10px;
+            padding: 15px;
+        }
+        .control-section h3 {
+            margin-top: 0;
+            text-align: center;
+            border-bottom: 1px solid #ffa500;
+            padding-bottom: 5px;
+        }
+        .slider-group {
+            margin-bottom: 15px;
+        }
+        .slider-group label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            margin-bottom: 3px;
+        }
+        .slider-group input[type=range] {
+            width: 100%;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .checkbox-group label {
+            cursor: pointer;
+        }
+        .buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin: 25px 0 10px;
+            flex-wrap: wrap;
+        }
+        button {
+            background: #2a2a2a;
+            color: #ffa500;
+            border: 2px solid #ffa500;
+            border-radius: 30px;
+            padding: 12px 30px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.2s;
+            letter-spacing: 1px;
+            flex: 1 1 auto;
+            min-width: 120px;
+        }
+        button:hover {
+            background: #ffa500;
+            color: #1a1a1a;
+            box-shadow: 0 0 15px #ffa500;
+        }
+        button:disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        .note {
+            text-align: center;
+            font-size: 0.85rem;
+            color: #cc8400;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>⚙️ Multi‑Cylinder Engine Lab ⚙️</h1>
+
+    <!-- RPM control + cylinder selector -->
+    <div class="rpm-panel">
+        <div class="rpm-value" id="rpmDisplay">2000</div>
+        <input type="range" id="rpmSlider" min="600" max="9000" value="2000" step="10">
+
+        <div class="cylinder-selector">
+            <label for="cylinderSelect">Cylinders:</label>
+            <select id="cylinderSelect">
+                <option value="4">4</option>
+                <option value="5" selected>5</option>
+                <option value="6">6</option>
+                <option value="8">8</option>
+                <option value="10">10</option>
+                <option value="12">12</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Graph section -->
+    <div class="graph-container">
+        <div class="graph-header">
+            <span class="graph-title">RPM Curve (0–10s, 600–9000 RPM)</span>
+            <div class="graph-buttons">
+                <button id="playGraphBtn">Play</button>
+                <button id="stopGraphBtn">Stop</button>
+                <button id="clearGraphBtn">Clear Points</button>
+            </div>
+        </div>
+        <canvas id="rpmGraphCanvas" width="800" height="200"></canvas>
+        <div class="time-display" id="graphTimeDisplay">Time: 0.0s / 10.0s</div>
+    </div>
+
+    <!-- Sound controls grid -->
+    <div class="controls-grid">
+        <!-- Master & Main -->
+        <div class="control-section">
+            <h3>Master</h3>
+            <div class="slider-group">
+                <label>Volume <span id="masterVolVal">0.5</span></label>
+                <input type="range" id="masterVol" min="0" max="1" step="0.01" value="0.5">
+            </div>
+            <h3>Main Oscillator (Saw)</h3>
+            <div class="slider-group">
+                <label>Gain <span id="mainGainVal">0.3</span></label>
+                <input type="range" id="mainGain" min="0" max="1" step="0.01" value="0.3">
+            </div>
+            <div class="slider-group">
+                <label>Filter Low (Hz) <span id="mainFltLowVal">200</span></label>
+                <input type="range" id="mainFltLow" min="50" max="500" step="1" value="200">
+            </div>
+            <div class="slider-group">
+                <label>Filter High (Hz) <span id="mainFltHighVal">2000</span></label>
+                <input type="range" id="mainFltHigh" min="500" max="5000" step="10" value="2000">
+            </div>
+            <div class="slider-group">
+                <label>Filter Q <span id="mainFltQVal">0.7</span></label>
+                <input type="range" id="mainFltQ" min="0.1" max="10" step="0.1" value="0.7">
+            </div>
+        </div>
+
+        <!-- Sub & Harmonic -->
+        <div class="control-section">
+            <h3>Sub Oscillator (Sine)</h3>
+            <div class="slider-group">
+                <label>Gain <span id="subGainVal">0.25</span></label>
+                <input type="range" id="subGain" min="0" max="1" step="0.01" value="0.25">
+            </div>
+            <div class="slider-group">
+                <label>Harmonic Multiplier <span id="subMultVal">0.5</span></label>
+                <input type="range" id="subMult" min="0.25" max="2" step="0.01" value="0.5">
+            </div>
+
+            <h3>2.5th Order Harmonic (Triangle)</h3>
+            <div class="checkbox-group">
+                <input type="checkbox" id="harmonicEnable">
+                <label>Enable</label>
+            </div>
+            <div class="slider-group">
+                <label>Gain <span id="harmonicGainVal">0.2</span></label>
+                <input type="range" id="harmonicGain" min="0" max="1" step="0.01" value="0.2">
+            </div>
+            <div class="slider-group">
+                <label>Multiplier <span id="harmonicMultVal">2.5</span></label>
+                <input type="range" id="harmonicMult" min="1" max="5" step="0.1" value="2.5">
+            </div>
+        </div>
+
+        <!-- Noise -->
+        <div class="control-section">
+            <h3>Noise (Exhaust/Intake)</h3>
+            <div class="slider-group">
+                <label>Gain <span id="noiseGainVal">0.1</span></label>
+                <input type="range" id="noiseGain" min="0" max="1" step="0.01" value="0.1">
+            </div>
+            <div class="slider-group">
+                <label>Bandpass Low (Hz) <span id="noiseLowVal">300</span></label>
+                <input type="range" id="noiseLow" min="100" max="1000" step="10" value="300">
+            </div>
+            <div class="slider-group">
+                <label>Bandpass High (Hz) <span id="noiseHighVal">2500</span></label>
+                <input type="range" id="noiseHigh" min="1000" max="5000" step="10" value="2500">
+            </div>
+            <div class="slider-group">
+                <label>Q <span id="noiseQVal">1.5</span></label>
+                <input type="range" id="noiseQ" min="0.1" max="5" step="0.1" value="1.5">
+            </div>
+        </div>
+
+        <!-- Turbo & Effects -->
+        <div class="control-section">
+            <h3>Turbo / Supercharger</h3>
+            <div class="checkbox-group">
+                <input type="checkbox" id="turboEnable">
+                <label>Enable</label>
+            </div>
+            <div class="slider-group">
+                <label>Gain <span id="turboGainVal">0.15</span></label>
+                <input type="range" id="turboGain" min="0" max="1" step="0.01" value="0.15">
+            </div>
+            <div class="slider-group">
+                <label>Multiplier <span id="turboMultVal">20</span></label>
+                <input type="range" id="turboMult" min="5" max="50" step="1" value="20">
+            </div>
+
+            <h3>Distortion</h3>
+            <div class="slider-group">
+                <label>Drive <span id="distDriveVal">0</span></label>
+                <input type="range" id="distDrive" min="0" max="1" step="0.01" value="0">
+            </div>
+
+            <h3>Reverb</h3>
+            <div class="slider-group">
+                <label>Mix <span id="reverbMixVal">0</span></label>
+                <input type="range" id="reverbMix" min="0" max="1" step="0.01" value="0">
+            </div>
+        </div>
+    </div>
+
+    <!-- Main control buttons -->
+    <div class="buttons">
+        <button id="startBtn">Start Engine</button>
+        <button id="stopBtn">Stop Engine</button>
+        <button id="resetBtn">Reset Defaults</button>
+    </div>
+
+    <div class="note">
+        Firing frequency = RPM × cylinders / 120 Hz (4‑stroke) • Graph: double‑click to add point, drag points vertically • Play follows curve
+    </div>
+</div>
+
+<script>
+    (function() {
+        // ---------- Audio context and node references ----------
+        let audioCtx = null;
+        let isRunning = false;
+
+        // Core nodes
+        let masterGain = null;
+        let summingGain = null;
+        let waveshaper = null;
+        let dryGain = null, wetGain = null, convolver = null;
+
+        // Sources
+        let mainOsc = null, subOsc = null, harmonicOsc = null, turboOsc = null, noiseSource = null;
+
+        // Gains and filters per source
+        let mainGainNode = null, mainLowpass = null;
+        let subGainNode = null;
+        let harmonicGainNode = null;
+        let turboGainNode = null;
+        let noiseBandpass = null, noiseGainNode = null;
+
+        // Constants
+        const MIN_RPM = 600, MAX_RPM = 9000;
+        const SMOOTH_TIME = 0.05; // 50ms
+
+        // Cylinder count (default 5)
+        let cylinderCount = 5;
+
+        // ---------- Graph related variables ----------
+        const canvas = document.getElementById('rpmGraphCanvas');
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width, height = canvas.height;
+        let points = []; // { time, rpm }
+        let draggingIndex = -1;
+        let isPlaying = false;
+        let playStartTime = null;
+        let playAnimationFrame = null;
+        const MAX_TIME = 10.0;
+
+        // UI elements
+        const playGraphBtn = document.getElementById('playGraphBtn');
+        const stopGraphBtn = document.getElementById('stopGraphBtn');
+        const clearGraphBtn = document.getElementById('clearGraphBtn');
+        const graphTimeDisplay = document.getElementById('graphTimeDisplay');
+        const rpmSlider = document.getElementById('rpmSlider');
+        const rpmDisplay = document.getElementById('rpmDisplay');
+        const cylinderSelect = document.getElementById('cylinderSelect');
+
+        // ---------- Helper: create noise buffer ----------
+        function createNoiseBuffer(ctx, duration = 2) {
+            const sampleRate = ctx.sampleRate;
+            const bufferSize = sampleRate * duration;
+            const buffer = ctx.createBuffer(1, bufferSize, sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+            return buffer;
+        }
+
+        // ---------- Helper: generate simple reverb impulse ----------
+        function createReverbImpulse(ctx, duration = 2.0, decay = 3.0) {
+            const sampleRate = ctx.sampleRate;
+            const length = sampleRate * duration;
+            const buffer = ctx.createBuffer(2, length, sampleRate);
+            for (let channel = 0; channel < 2; channel++) {
+                const data = buffer.getChannelData(channel);
+                for (let i = 0; i < length; i++) {
+                    const t = i / sampleRate;
+                    const envelope = Math.exp(-decay * t);
+                    data[i] = (Math.random() * 2 - 1) * envelope;
+                }
+            }
+            return buffer;
+        }
+
+        // ---------- Helper: update waveshaper curve ----------
+        function setDistortionCurve(drive) {
+            if (!waveshaper) return;
+            const samples = 2048;
+            const curve = new Float32Array(samples);
+            const k = drive * 10;
+            for (let i = 0; i < samples; i++) {
+                const x = (i / (samples - 1)) * 2 - 1;
+                const a = 1 - drive;
+                const b = drive;
+                curve[i] = a * x + b * Math.tanh(3 * x);
+            }
+            waveshaper.curve = curve;
+        }
+
+        // ---------- Graph drawing and interaction ----------
+        function drawGraph() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Draw axes
+            ctx.strokeStyle = '#ffa500';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(30, 10); ctx.lineTo(30, height-20); ctx.lineTo(width-20, height-20);
+            ctx.stroke();
+
+            // Grid / labels
+            ctx.fillStyle = '#ffa500';
+            ctx.font = '10px Courier New';
+            for (let t = 0; t <= 10; t+=2) {
+                let x = 30 + (t / MAX_TIME) * (width - 60);
+                ctx.fillText(t + 's', x-10, height-5);
+            }
+            for (let rpm = MIN_RPM; rpm <= MAX_RPM; rpm += 2000) {
+                let y = height-20 - ((rpm - MIN_RPM) / (MAX_RPM - MIN_RPM)) * (height - 60);
+                ctx.fillText(rpm, 5, y+5);
+            }
+
+            if (points.length === 0) return;
+
+            // Sort points by time
+            points.sort((a,b) => a.time - b.time);
+
+            // Draw lines
+            ctx.beginPath();
+            ctx.strokeStyle = '#ffa500';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < points.length; i++) {
+                const x = 30 + (points[i].time / MAX_TIME) * (width - 60);
+                const y = height-20 - ((points[i].rpm - MIN_RPM) / (MAX_RPM - MIN_RPM)) * (height - 60);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Draw points
+            for (let i = 0; i < points.length; i++) {
+                const x = 30 + (points[i].time / MAX_TIME) * (width - 60);
+                const y = height-20 - ((points[i].rpm - MIN_RPM) / (MAX_RPM - MIN_RPM)) * (height - 60);
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, 2*Math.PI);
+                ctx.fillStyle = i === draggingIndex ? '#ff0' : '#ffa500';
+                ctx.fill();
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+        }
+
+        // Convert mouse event to graph coordinates (time, rpm)
+        function mouseToGraph(mouseX, mouseY) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const canvasX = (mouseX - rect.left) * scaleX;
+            const canvasY = (mouseY - rect.top) * scaleY;
+
+            const minX = 30, maxX = width - 30;
+            const minY = 20, maxY = height - 20;
+            if (canvasX < minX || canvasX > maxX || canvasY < minY || canvasY > maxY) return null;
+
+            const time = ((canvasX - minX) / (maxX - minX)) * MAX_TIME;
+            const rpm = MIN_RPM + ((maxY - canvasY) / (maxY - minY)) * (MAX_RPM - MIN_RPM);
+            return { time: Math.min(MAX_TIME, Math.max(0, time)), rpm: Math.min(MAX_RPM, Math.max(MIN_RPM, rpm)) };
+        }
+
+        // Find point near mouse
+        function findPointNear(mouseX, mouseY, threshold = 15) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const canvasX = (mouseX - rect.left) * scaleX;
+            const canvasY = (mouseY - rect.top) * scaleY;
+
+            for (let i = 0; i < points.length; i++) {
+                const x = 30 + (points[i].time / MAX_TIME) * (width - 60);
+                const y = height-20 - ((points[i].rpm - MIN_RPM) / (MAX_RPM - MIN_RPM)) * (height - 60);
+                const dist = Math.hypot(canvasX - x, canvasY - y);
+                if (dist < threshold) return i;
+            }
+            return -1;
+        }
+
+        // Add a new point
+        function addPoint(time, rpm) {
+            points.push({ time, rpm });
+            points.sort((a,b) => a.time - b.time);
+            drawGraph();
+        }
+
+        // Clear all points
+        function clearPoints() {
+            points = [];
+            drawGraph();
+        }
+
+        // Get RPM at a given time by linear interpolation
+        function getRPMAtTime(time) {
+            if (points.length === 0) return MIN_RPM;
+            if (points.length === 1) return points[0].rpm;
+            let left = points[0];
+            if (time <= left.time) return left.rpm;
+            let right = points[points.length-1];
+            if (time >= right.time) return right.rpm;
+            for (let i = 0; i < points.length-1; i++) {
+                if (time >= points[i].time && time <= points[i+1].time) {
+                    const t = (time - points[i].time) / (points[i+1].time - points[i].time);
+                    return points[i].rpm + t * (points[i+1].rpm - points[i].rpm);
+                }
+            }
+            return right.rpm;
+        }
+
+        // Playback function
+        function startPlayback() {
+            if (isPlaying) return;
+            if (points.length < 2) {
+                alert('Add at least two points to define a curve.');
+                return;
+            }
+            if (!isRunning) startEngine();
+
+            isPlaying = true;
+            playStartTime = audioCtx.currentTime;
+            playGraphBtn.disabled = true;
+            stopGraphBtn.disabled = false;
+            rpmSlider.disabled = true;
+
+            function updatePlayback() {
+                if (!isPlaying) return;
+                const now = audioCtx.currentTime;
+                const elapsed = now - playStartTime;
+                if (elapsed >= MAX_TIME) {
+                    stopPlayback();
+                    const finalRPM = getRPMAtTime(MAX_TIME);
+                    setRPM(finalRPM);
+                    return;
+                }
+                const rpm = getRPMAtTime(elapsed);
+                setRPM(rpm);
+                graphTimeDisplay.textContent = `Time: ${elapsed.toFixed(2)}s / ${MAX_TIME}s`;
+                playAnimationFrame = requestAnimationFrame(updatePlayback);
+            }
+            playAnimationFrame = requestAnimationFrame(updatePlayback);
+        }
+
+        function stopPlayback() {
+            if (!isPlaying) return;
+            isPlaying = false;
+            cancelAnimationFrame(playAnimationFrame);
+            playGraphBtn.disabled = false;
+            stopGraphBtn.disabled = true;
+            rpmSlider.disabled = false;
+            graphTimeDisplay.textContent = `Time: 0.0s / ${MAX_TIME}s`;
+        }
+
+        // Set RPM both in slider and engine
+        function setRPM(rpm) {
+            rpm = Math.min(MAX_RPM, Math.max(MIN_RPM, rpm));
+            rpmSlider.value = rpm;
+            rpmDisplay.textContent = Math.round(rpm);
+            if (isRunning) {
+                updateAllParams();
+            }
+        }
+
+        // ---------- Mouse event handlers for graph ----------
+        canvas.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const idx = findPointNear(e.clientX, e.clientY);
+            if (idx !== -1) {
+                draggingIndex = idx;
+                canvas.style.cursor = 'grabbing';
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (draggingIndex !== -1) {
+                e.preventDefault();
+                const coords = mouseToGraph(e.clientX, e.clientY);
+                if (coords) {
+                    points[draggingIndex].rpm = coords.rpm;
+                    drawGraph();
+                }
+            } else {
+                const hoverIdx = findPointNear(e.clientX, e.clientY);
+                canvas.style.cursor = hoverIdx !== -1 ? 'grab' : 'crosshair';
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (draggingIndex !== -1) {
+                draggingIndex = -1;
+                canvas.style.cursor = 'crosshair';
+                drawGraph();
+            }
+        });
+
+        canvas.addEventListener('mouseleave', (e) => {
+            draggingIndex = -1;
+            canvas.style.cursor = 'crosshair';
+            drawGraph();
+        });
+
+        canvas.addEventListener('dblclick', (e) => {
+            const coords = mouseToGraph(e.clientX, e.clientY);
+            if (coords) {
+                addPoint(coords.time, coords.rpm);
+            }
+        });
+
+        // Graph buttons
+        playGraphBtn.addEventListener('click', startPlayback);
+        stopGraphBtn.addEventListener('click', stopPlayback);
+        clearGraphBtn.addEventListener('click', clearPoints);
+
+        // ---------- Audio engine functions ----------
+        function startEngine() {
+            if (isRunning) return;
+
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            masterGain = audioCtx.createGain();
+            masterGain.gain.value = parseFloat(document.getElementById('masterVol').value);
+
+            summingGain = audioCtx.createGain();
+            summingGain.gain.value = 1;
+
+            waveshaper = audioCtx.createWaveShaper();
+            waveshaper.oversample = '4x';
+            setDistortionCurve(parseFloat(document.getElementById('distDrive').value));
+
+            dryGain = audioCtx.createGain();
+            wetGain = audioCtx.createGain();
+            convolver = audioCtx.createConvolver();
+            convolver.buffer = createReverbImpulse(audioCtx, 2.0, 3.0);
+
+            summingGain.connect(waveshaper);
+            waveshaper.connect(dryGain);
+            waveshaper.connect(convolver);
+            convolver.connect(wetGain);
+            dryGain.connect(masterGain);
+            wetGain.connect(masterGain);
+            masterGain.connect(audioCtx.destination);
+
+            // Main oscillator (saw)
+            mainOsc = audioCtx.createOscillator();
+            mainOsc.type = 'sawtooth';
+            mainGainNode = audioCtx.createGain();
+            mainLowpass = audioCtx.createBiquadFilter();
+            mainLowpass.type = 'lowpass';
+            mainOsc.connect(mainGainNode);
+            mainGainNode.connect(mainLowpass);
+            mainLowpass.connect(summingGain);
+
+            // Sub oscillator (sine)
+            subOsc = audioCtx.createOscillator();
+            subOsc.type = 'sine';
+            subGainNode = audioCtx.createGain();
+            subOsc.connect(subGainNode);
+            subGainNode.connect(summingGain);
+
+            // Harmonic oscillator (triangle)
+            harmonicOsc = audioCtx.createOscillator();
+            harmonicOsc.type = 'triangle';
+            harmonicGainNode = audioCtx.createGain();
+            harmonicOsc.connect(harmonicGainNode);
+            harmonicGainNode.connect(summingGain);
+
+            // Turbo oscillator (sine)
+            turboOsc = audioCtx.createOscillator();
+            turboOsc.type = 'sine';
+            turboGainNode = audioCtx.createGain();
+            turboOsc.connect(turboGainNode);
+            turboGainNode.connect(summingGain);
+
+            // Noise source
+            const noiseBuffer = createNoiseBuffer(audioCtx, 2);
+            noiseSource = audioCtx.createBufferSource();
+            noiseSource.buffer = noiseBuffer;
+            noiseSource.loop = true;
+            noiseBandpass = audioCtx.createBiquadFilter();
+            noiseBandpass.type = 'bandpass';
+            noiseGainNode = audioCtx.createGain();
+            noiseSource.connect(noiseBandpass);
+            noiseBandpass.connect(noiseGainNode);
+            noiseGainNode.connect(summingGain);
+
+            // Start all
+            mainOsc.start(0);
+            subOsc.start(0);
+            harmonicOsc.start(0);
+            turboOsc.start(0);
+            noiseSource.start(0);
+
+            isRunning = true;
+            updateAllParams();
+        }
+
+        function stopEngine() {
+            if (!isRunning) return;
+            stopPlayback();
+
+            if (mainOsc) mainOsc.stop(0);
+            if (subOsc) subOsc.stop(0);
+            if (harmonicOsc) harmonicOsc.stop(0);
+            if (turboOsc) turboOsc.stop(0);
+            if (noiseSource) noiseSource.stop(0);
+
+            [mainOsc, subOsc, harmonicOsc, turboOsc, noiseSource,
+             mainGainNode, subGainNode, harmonicGainNode, turboGainNode, noiseGainNode,
+             mainLowpass, noiseBandpass,
+             summingGain, waveshaper, dryGain, wetGain, convolver, masterGain
+            ].forEach(node => {
+                if (node && node.disconnect) node.disconnect();
+            });
+
+            mainOsc = subOsc = harmonicOsc = turboOsc = noiseSource = null;
+            mainGainNode = subGainNode = harmonicGainNode = turboGainNode = noiseGainNode = null;
+            mainLowpass = noiseBandpass = null;
+            summingGain = waveshaper = dryGain = wetGain = convolver = masterGain = null;
+
+            isRunning = false;
+            if (audioCtx && audioCtx.state === 'running') {
+                audioCtx.suspend();
+            }
+        }
+
+        // ---------- Update all audio parameters from UI sliders + cylinder count ----------
+        function updateAllParams() {
+            if (!isRunning || !audioCtx) return;
+
+            const rpm = parseFloat(rpmSlider.value);
+            // Firing frequency for 4‑stroke: RPM * cylinders / 120
+            const mainFreq = rpm * cylinderCount / 120;
+
+            // Master volume
+            const masterVol = parseFloat(document.getElementById('masterVol').value);
+            masterGain.gain.linearRampToValueAtTime(masterVol, audioCtx.currentTime + SMOOTH_TIME);
+
+            // Main oscillator
+            const mainGain = parseFloat(document.getElementById('mainGain').value);
+            const mainFltLow = parseFloat(document.getElementById('mainFltLow').value);
+            const mainFltHigh = parseFloat(document.getElementById('mainFltHigh').value);
+            const mainFltQ = parseFloat(document.getElementById('mainFltQ').value);
+            const mainCutoff = mainFltLow + (rpm - MIN_RPM) * (mainFltHigh - mainFltLow) / (MAX_RPM - MIN_RPM);
+            mainOsc.frequency.linearRampToValueAtTime(mainFreq, audioCtx.currentTime + SMOOTH_TIME);
+            mainGainNode.gain.linearRampToValueAtTime(mainGain, audioCtx.currentTime + SMOOTH_TIME);
+            mainLowpass.frequency.linearRampToValueAtTime(mainCutoff, audioCtx.currentTime + SMOOTH_TIME);
+            mainLowpass.Q.linearRampToValueAtTime(mainFltQ, audioCtx.currentTime + SMOOTH_TIME);
+
+            // Sub oscillator
+            const subGain = parseFloat(document.getElementById('subGain').value);
+            const subMult = parseFloat(document.getElementById('subMult').value);
+            subOsc.frequency.linearRampToValueAtTime(mainFreq * subMult, audioCtx.currentTime + SMOOTH_TIME);
+            subGainNode.gain.linearRampToValueAtTime(subGain, audioCtx.currentTime + SMOOTH_TIME);
+
+            // Harmonic oscillator
+            const harmonicEnable = document.getElementById('harmonicEnable').checked;
+            const harmonicGain = harmonicEnable ? parseFloat(document.getElementById('harmonicGain').value) : 0;
+            const harmonicMult = parseFloat(document.getElementById('harmonicMult').value);
+            harmonicOsc.frequency.linearRampToValueAtTime(mainFreq * harmonicMult, audioCtx.currentTime + SMOOTH_TIME);
+            harmonicGainNode.gain.linearRampToValueAtTime(harmonicGain, audioCtx.currentTime + SMOOTH_TIME);
+
+            // Turbo oscillator
+            const turboEnable = document.getElementById('turboEnable').checked;
+            const turboGain = turboEnable ? parseFloat(document.getElementById('turboGain').value) : 0;
+            const turboMult = parseFloat(document.getElementById('turboMult').value);
+            turboOsc.frequency.linearRampToValueAtTime(mainFreq * turboMult, audioCtx.currentTime + SMOOTH_TIME);
+            turboGainNode.gain.linearRampToValueAtTime(turboGain, audioCtx.currentTime + SMOOTH_TIME);
+
+            // Noise
+            const noiseGain = parseFloat(document.getElementById('noiseGain').value);
+            const noiseLow = parseFloat(document.getElementById('noiseLow').value);
+            const noiseHigh = parseFloat(document.getElementById('noiseHigh').value);
+            const noiseQ = parseFloat(document.getElementById('noiseQ').value);
+            const noiseCenter = noiseLow + (rpm - MIN_RPM) * (noiseHigh - noiseLow) / (MAX_RPM - MIN_RPM);
+            noiseGainNode.gain.linearRampToValueAtTime(noiseGain, audioCtx.currentTime + SMOOTH_TIME);
+            noiseBandpass.frequency.linearRampToValueAtTime(noiseCenter, audioCtx.currentTime + SMOOTH_TIME);
+            noiseBandpass.Q.linearRampToValueAtTime(noiseQ, audioCtx.currentTime + SMOOTH_TIME);
+
+            // Distortion drive
+            const distDrive = parseFloat(document.getElementById('distDrive').value);
+            setDistortionCurve(distDrive);
+
+            // Reverb mix
+            const reverbMix = parseFloat(document.getElementById('reverbMix').value);
+            dryGain.gain.linearRampToValueAtTime(1 - reverbMix, audioCtx.currentTime + SMOOTH_TIME);
+            wetGain.gain.linearRampToValueAtTime(reverbMix, audioCtx.currentTime + SMOOTH_TIME);
+        }
+
+        // ---------- UI update helpers ----------
+        function updateAllSpans() {
+            document.getElementById('rpmDisplay').textContent = rpmSlider.value;
+            document.getElementById('masterVolVal').textContent = document.getElementById('masterVol').value;
+            document.getElementById('mainGainVal').textContent = document.getElementById('mainGain').value;
+            document.getElementById('mainFltLowVal').textContent = document.getElementById('mainFltLow').value;
+            document.getElementById('mainFltHighVal').textContent = document.getElementById('mainFltHigh').value;
+            document.getElementById('mainFltQVal').textContent = document.getElementById('mainFltQ').value;
+            document.getElementById('subGainVal').textContent = document.getElementById('subGain').value;
+            document.getElementById('subMultVal').textContent = document.getElementById('subMult').value;
+            document.getElementById('harmonicGainVal').textContent = document.getElementById('harmonicGain').value;
+            document.getElementById('harmonicMultVal').textContent = document.getElementById('harmonicMult').value;
+            document.getElementById('noiseGainVal').textContent = document.getElementById('noiseGain').value;
+            document.getElementById('noiseLowVal').textContent = document.getElementById('noiseLow').value;
+            document.getElementById('noiseHighVal').textContent = document.getElementById('noiseHigh').value;
+            document.getElementById('noiseQVal').textContent = document.getElementById('noiseQ').value;
+            document.getElementById('turboGainVal').textContent = document.getElementById('turboGain').value;
+            document.getElementById('turboMultVal').textContent = document.getElementById('turboMult').value;
+            document.getElementById('distDriveVal').textContent = document.getElementById('distDrive').value;
+            document.getElementById('reverbMixVal').textContent = document.getElementById('reverbMix').value;
+        }
+
+        function resetDefaults() {
+            const defaults = {
+                rpm: 2000,
+                masterVol: 0.5,
+                mainGain: 0.3,
+                mainFltLow: 200,
+                mainFltHigh: 2000,
+                mainFltQ: 0.7,
+                subGain: 0.25,
+                subMult: 0.5,
+                harmonicEnable: false,
+                harmonicGain: 0.2,
+                harmonicMult: 2.5,
+                noiseGain: 0.1,
+                noiseLow: 300,
+                noiseHigh: 2500,
+                noiseQ: 1.5,
+                turboEnable: false,
+                turboGain: 0.15,
+                turboMult: 20,
+                distDrive: 0,
+                reverbMix: 0,
+                cylinders: 5
+            };
+
+            rpmSlider.value = defaults.rpm;
+            document.getElementById('masterVol').value = defaults.masterVol;
+            document.getElementById('mainGain').value = defaults.mainGain;
+            document.getElementById('mainFltLow').value = defaults.mainFltLow;
+            document.getElementById('mainFltHigh').value = defaults.mainFltHigh;
+            document.getElementById('mainFltQ').value = defaults.mainFltQ;
+            document.getElementById('subGain').value = defaults.subGain;
+            document.getElementById('subMult').value = defaults.subMult;
+            document.getElementById('harmonicEnable').checked = defaults.harmonicEnable;
+            document.getElementById('harmonicGain').value = defaults.harmonicGain;
+            document.getElementById('harmonicMult').value = defaults.harmonicMult;
+            document.getElementById('noiseGain').value = defaults.noiseGain;
+            document.getElementById('noiseLow').value = defaults.noiseLow;
+            document.getElementById('noiseHigh').value = defaults.noiseHigh;
+            document.getElementById('noiseQ').value = defaults.noiseQ;
+            document.getElementById('turboEnable').checked = defaults.turboEnable;
+            document.getElementById('turboGain').value = defaults.turboGain;
+            document.getElementById('turboMult').value = defaults.turboMult;
+            document.getElementById('distDrive').value = defaults.distDrive;
+            document.getElementById('reverbMix').value = defaults.reverbMix;
+            cylinderSelect.value = defaults.cylinders;
+            cylinderCount = defaults.cylinders;
+
+            updateAllSpans();
+            if (isRunning) updateAllParams();
+        }
+
+        // ---------- Event listeners ----------
+        // Sliders
+        const allSliders = document.querySelectorAll('input[type=range]');
+        allSliders.forEach(slider => {
+            slider.addEventListener('input', function() {
+                updateAllSpans();
+                if (isRunning) updateAllParams();
+            });
+        });
+
+        // Checkboxes
+        document.getElementById('harmonicEnable').addEventListener('change', () => {
+            if (isRunning) updateAllParams();
+        });
+        document.getElementById('turboEnable').addEventListener('change', () => {
+            if (isRunning) updateAllParams();
+        });
+
+        // Cylinder selector
+        cylinderSelect.addEventListener('change', (e) => {
+            cylinderCount = parseInt(e.target.value);
+            if (isRunning) updateAllParams();
+        });
+
+        // Buttons
+        document.getElementById('startBtn').addEventListener('click', startEngine);
+        document.getElementById('stopBtn').addEventListener('click', stopEngine);
+        document.getElementById('resetBtn').addEventListener('click', resetDefaults);
+
+        // Manual slider change (for display and engine)
+        rpmSlider.addEventListener('input', function() {
+            rpmDisplay.textContent = this.value;
+            if (isRunning) updateAllParams();
+        });
+
+        // Initialize UI
+        updateAllSpans();
+        drawGraph();
+
+        // ---------- Cross-window sync via localStorage ----------
+        // Load initial values from localStorage (shared state between index.html and engine_sound.html)
+        function loadSoundParamsFromLocalStorage() {
+            const paramMap = {
+                'masterVol': 'masterVol',
+                'mainGain': 'mainGain',
+                'mainFltLow': 'mainFltLow',
+                'mainFltHigh': 'mainFltHigh',
+                'mainFltQ': 'mainFltQ',
+                'subGain': 'subGain',
+                'subMult': 'subMult',
+                'harmonicEnable': 'harmonicEnable',
+                'harmonicGain': 'harmonicGain',
+                'harmonicMult': 'harmonicMult',
+                'noiseGain': 'noiseGain',
+                'noiseLow': 'noiseLow',
+                'noiseHigh': 'noiseHigh',
+                'noiseQ': 'noiseQ',
+                'turboEnable': 'turboEnable',
+                'turboGain': 'turboGain',
+                'turboMult': 'turboMult',
+                'distDrive': 'distDrive',
+                'reverbMix': 'reverbMix',
+            };
+
+            for (const [elementId, paramName] of Object.entries(paramMap)) {
+                const localValue = localStorage.getItem(`soundParam_${paramName}`);
+                if (localValue !== null) {
+                    const element = document.getElementById(elementId);
+                    if (element) {
+                        if (element.type === 'checkbox') {
+                            element.checked = localValue === 'true';
+                        } else {
+                            element.value = localValue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Save a sound parameter to localStorage (notifies other windows via 'storage' event)
+        function saveSoundParamToLocalStorage(paramName, value) {
+            localStorage.setItem(`soundParam_${paramName}`, String(value));
+        }
+
+        // Listen for storage changes from OTHER WINDOWS
+        window.addEventListener('storage', (event) => {
+            if (event.key && event.key.startsWith('soundParam_')) {
+                const paramName = event.key.replace('soundParam_', '');
+                const newValue = event.newValue === 'true' ? true : event.newValue === 'false' ? false : parseFloat(event.newValue);
+
+                // Update the local slider/checkbox
+                const elementId = paramName;
+                const element = document.getElementById(elementId);
+                if (element) {
+                    if (element.type === 'checkbox') {
+                        element.checked = newValue;
+                    } else {
+                        element.value = newValue;
+                    }
+                    // Trigger update
+                    updateAllSpans();
+                    if (isRunning) updateAllParams();
+                }
+            }
+        });
+
+        // Load initial values from localStorage
+        loadSoundParamsFromLocalStorage();
+
+        // Modify slider event listeners to save to localStorage
+        allSliders.forEach(slider => {
+            slider.addEventListener('input', function() {
+                const paramName = this.id;
+                const value = parseFloat(this.value);
+                saveSoundParamToLocalStorage(paramName, value);
+                updateAllSpans();
+                if (isRunning) updateAllParams();
+            });
+        });
+
+        // Modify checkbox event listeners to save to localStorage
+        document.getElementById('harmonicEnable').addEventListener('change', function() {
+            saveSoundParamToLocalStorage('harmonicEnable', this.checked);
+            if (isRunning) updateAllParams();
+        });
+        document.getElementById('turboEnable').addEventListener('change', function() {
+            saveSoundParamToLocalStorage('turboEnable', this.checked);
+            if (isRunning) updateAllParams();
+        });
+
+        // Cleanup
+        window.addEventListener('beforeunload', () => {
+            if (isRunning) stopEngine();
+        });
+    })();
+</script>
+</body>
+</html>

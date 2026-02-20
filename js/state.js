@@ -258,6 +258,30 @@ const state = {
     maxTrailArrows:        MAX_TRAIL_ARROWS,
   },
 
+  // Sound synthesis parameters (from engine_sound.html)
+  // Initialized from localStorage with defaults matching sound.js
+  soundParams: {
+    masterVol:     parseFloat(localStorage.getItem('soundParam_masterVol')) ?? 0.5,
+    mainGain:      parseFloat(localStorage.getItem('soundParam_mainGain')) ?? 0.3,
+    mainFltLow:    parseFloat(localStorage.getItem('soundParam_mainFltLow')) ?? 200,
+    mainFltHigh:   parseFloat(localStorage.getItem('soundParam_mainFltHigh')) ?? 2000,
+    mainFltQ:      parseFloat(localStorage.getItem('soundParam_mainFltQ')) ?? 0.7,
+    subGain:       parseFloat(localStorage.getItem('soundParam_subGain')) ?? 0.25,
+    subMult:       parseFloat(localStorage.getItem('soundParam_subMult')) ?? 0.5,
+    harmonicEnable: localStorage.getItem('soundParam_harmonicEnable') === 'true' ?? false,
+    harmonicGain:  parseFloat(localStorage.getItem('soundParam_harmonicGain')) ?? 0.2,
+    harmonicMult:  parseFloat(localStorage.getItem('soundParam_harmonicMult')) ?? 2.5,
+    noiseGain:     parseFloat(localStorage.getItem('soundParam_noiseGain')) ?? 0.1,
+    noiseLow:      parseFloat(localStorage.getItem('soundParam_noiseLow')) ?? 300,
+    noiseHigh:     parseFloat(localStorage.getItem('soundParam_noiseHigh')) ?? 2500,
+    noiseQ:        parseFloat(localStorage.getItem('soundParam_noiseQ')) ?? 1.5,
+    turboEnable:   localStorage.getItem('soundParam_turboEnable') === 'true' ?? false,
+    turboGain:     parseFloat(localStorage.getItem('soundParam_turboGain')) ?? 0.15,
+    turboMult:     parseFloat(localStorage.getItem('soundParam_turboMult')) ?? 20,
+    distDrive:     parseFloat(localStorage.getItem('soundParam_distDrive')) ?? 0,
+    reverbMix:     parseFloat(localStorage.getItem('soundParam_reverbMix')) ?? 0,
+  },
+
 };
 
 export default state;

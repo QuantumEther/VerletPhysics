@@ -145,6 +145,107 @@
           <span class="slider-value" id="yawDampingValue">1.0</span>
         </div>
         <button id="engineToggle" style="width:100%;padding:8px;margin-top:10px;font-family:'JetBrains Mono',monospace;font-size:0.8rem;font-weight:700;letter-spacing:1px;background:#2ecc71;color:#111;border:2px solid #2ecc71;border-radius:8px;cursor:pointer">Engine ON</button>
+        <button id="soundToggle" style="width:100%;padding:8px;margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:0.8rem;font-weight:700;letter-spacing:1px;background:#e74c3c;color:#fff;border:2px solid #e74c3c;border-radius:8px;cursor:pointer">Sound OFF</button>
+        <details style="margin-top:10px;padding:8px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
+          <summary style="cursor:pointer;font-weight:700;color:#ffa500;user-select:none;">🔊 Sound Settings</summary>
+          <div style="margin-top:10px;">
+            <div class="slider-row">
+              <label style="flex:1;">Master Volume</label>
+              <input type="range" id="masterVol" min="0" max="1" step="0.01" value="0.5" style="flex:2;">
+              <span class="slider-value" id="masterVolValue">0.5</span>
+            </div>
+            <div class="slider-row">
+              <label>Main Gain</label>
+              <input type="range" id="mainGain" min="0" max="1" step="0.01" value="0.3" style="flex:2;">
+              <span class="slider-value" id="mainGainValue">0.3</span>
+            </div>
+            <div class="slider-row">
+              <label>Main Filter Low (Hz)</label>
+              <input type="range" id="mainFltLow" min="50" max="1000" step="10" value="200" style="flex:2;">
+              <span class="slider-value" id="mainFltLowValue">200</span>
+            </div>
+            <div class="slider-row">
+              <label>Main Filter High (Hz)</label>
+              <input type="range" id="mainFltHigh" min="500" max="5000" step="50" value="2000" style="flex:2;">
+              <span class="slider-value" id="mainFltHighValue">2000</span>
+            </div>
+            <div class="slider-row">
+              <label>Main Filter Q</label>
+              <input type="range" id="mainFltQ" min="0.1" max="10" step="0.1" value="0.7" style="flex:2;">
+              <span class="slider-value" id="mainFltQValue">0.7</span>
+            </div>
+            <div class="slider-row">
+              <label>Sub Gain</label>
+              <input type="range" id="subGain" min="0" max="1" step="0.01" value="0.25" style="flex:2;">
+              <span class="slider-value" id="subGainValue">0.2</span>
+            </div>
+            <div class="slider-row">
+              <label>Sub Multiplier</label>
+              <input type="range" id="subMult" min="0.1" max="2" step="0.1" value="0.5" style="flex:2;">
+              <span class="slider-value" id="subMultValue">0.5</span>
+            </div>
+            <div class="slider-row">
+              <label>Harmonic Enable</label>
+              <input type="checkbox" id="harmonicEnable" style="width:30px;height:20px;">
+              <span class="slider-value" id="harmonicEnableValue">OFF</span>
+            </div>
+            <div class="slider-row">
+              <label>Harmonic Gain</label>
+              <input type="range" id="harmonicGain" min="0" max="1" step="0.01" value="0.2" style="flex:2;">
+              <span class="slider-value" id="harmonicGainValue">0.2</span>
+            </div>
+            <div class="slider-row">
+              <label>Harmonic Multiplier</label>
+              <input type="range" id="harmonicMult" min="0.5" max="5" step="0.1" value="2.5" style="flex:2;">
+              <span class="slider-value" id="harmonicMultValue">2.5</span>
+            </div>
+            <div class="slider-row">
+              <label>Noise Gain</label>
+              <input type="range" id="noiseGain" min="0" max="1" step="0.01" value="0.1" style="flex:2;">
+              <span class="slider-value" id="noiseGainValue">0.1</span>
+            </div>
+            <div class="slider-row">
+              <label>Noise Low (Hz)</label>
+              <input type="range" id="noiseLow" min="100" max="2000" step="50" value="300" style="flex:2;">
+              <span class="slider-value" id="noiseLowValue">300</span>
+            </div>
+            <div class="slider-row">
+              <label>Noise High (Hz)</label>
+              <input type="range" id="noiseHigh" min="1000" max="10000" step="100" value="2500" style="flex:2;">
+              <span class="slider-value" id="noiseHighValue">2500</span>
+            </div>
+            <div class="slider-row">
+              <label>Noise Q</label>
+              <input type="range" id="noiseQ" min="0.1" max="5" step="0.1" value="1.5" style="flex:2;">
+              <span class="slider-value" id="noiseQValue">1.5</span>
+            </div>
+            <div class="slider-row">
+              <label>Turbo Enable</label>
+              <input type="checkbox" id="turboEnable" style="width:30px;height:20px;">
+              <span class="slider-value" id="turboEnableValue">OFF</span>
+            </div>
+            <div class="slider-row">
+              <label>Turbo Gain</label>
+              <input type="range" id="turboGain" min="0" max="1" step="0.01" value="0.15" style="flex:2;">
+              <span class="slider-value" id="turboGainValue">0.1</span>
+            </div>
+            <div class="slider-row">
+              <label>Turbo Multiplier</label>
+              <input type="range" id="turboMult" min="1" max="50" step="1" value="20" style="flex:2;">
+              <span class="slider-value" id="turboMultValue">20</span>
+            </div>
+            <div class="slider-row">
+              <label>Distortion Drive</label>
+              <input type="range" id="distDrive" min="0" max="1" step="0.01" value="0" style="flex:2;">
+              <span class="slider-value" id="distDriveValue">0.0</span>
+            </div>
+            <div class="slider-row">
+              <label>Reverb Mix</label>
+              <input type="range" id="reverbMix" min="0" max="1" step="0.01" value="0" style="flex:2;">
+              <span class="slider-value" id="reverbMixValue">0.0</span>
+            </div>
+          </div>
+        </details>
       </div>
 
       <!-- Clutch Panel -->

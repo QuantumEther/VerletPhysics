@@ -87,6 +87,8 @@ import {
 } from './renderer.js';
 
 import { initSliders, updateInfoBar, createNeedlePhysics, initChangeLogger } from './ui.js';
+import { startEngine as startEngineSound, stopEngine as stopEngineSound } from './sound.js';
+import { initSoundStateManager } from './soundStateManager.js';
 
 
 // =============================================================
@@ -140,8 +142,34 @@ initInput(simCanvas);
 // into state.params so physics starts with the correct parameters.
 initSliders();
 
+// Initialize sound state manager for cross-window synchronization via localStorage.
+initSoundStateManager();
+
 // Attach delegated console logger for all UI input events.
 initChangeLogger();
+
+// Wire sound toggle button -- AudioContext requires user gesture to start.
+const soundToggleButton = document.getElementById('soundToggle');
+let isSoundEnabled = false;
+if (soundToggleButton) {
+  soundToggleButton.addEventListener('click', () => {
+    if (!isSoundEnabled) {
+      startEngineSound();
+      isSoundEnabled = true;
+      soundToggleButton.textContent = 'Sound ON';
+      soundToggleButton.style.background = '#2ecc71';
+      soundToggleButton.style.borderColor = '#2ecc71';
+      soundToggleButton.style.color = '#111';
+    } else {
+      stopEngineSound();
+      isSoundEnabled = false;
+      soundToggleButton.textContent = 'Sound OFF';
+      soundToggleButton.style.background = '#e74c3c';
+      soundToggleButton.style.borderColor = '#e74c3c';
+      soundToggleButton.style.color = '#fff';
+    }
+  });
+}
 
 // Bind canvas resolution slider (not part of state.params, manual handler).
 const canvasResolutionSlider = document.getElementById('canvasResolutionSlider');
@@ -328,7 +356,8 @@ function runPhysicsStep(dt) {
   } else if (state.input.throttleKeyHeld) {
     throttleAmount = 1.0;
   }
-  updateEngineSound(state.engine.rpm, TACHOMETER_MAX_RPM, throttleAmount);
+  const effectiveRpm = (state.engine.isRunning && !state.engine.isStalled) ? state.engine.rpm : 0;
+  updateEngineSound(effectiveRpm, TACHOMETER_MAX_RPM, throttleAmount);
 }
 
 

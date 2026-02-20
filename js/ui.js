@@ -226,6 +226,62 @@ export function initSliders() {
   bind('checkerboardTileSize',  'checkerboardTileSize',  parseFloat1, fmtInt);
   bind('maxTrailArrows',        'maxTrailArrows',        parseInt1,   fmtInt);
 
+  // ---- Sound Parameters (bind to state.soundParams) ----
+  bindSound('masterVol',      'masterVol',      parseFloat1, fmt2);
+  bindSound('mainGain',       'mainGain',       parseFloat1, fmt2);
+  bindSound('mainFltLow',     'mainFltLow',     parseInt1,   fmtInt);
+  bindSound('mainFltHigh',    'mainFltHigh',    parseInt1,   fmtInt);
+  bindSound('mainFltQ',       'mainFltQ',       parseFloat1, fmt2);
+  bindSound('subGain',        'subGain',        parseFloat1, fmt2);
+  bindSound('subMult',        'subMult',        parseFloat1, fmt2);
+  bindSound('harmonicEnable', 'harmonicEnable', (s) => s === 'on', (v) => v ? 'ON' : 'OFF');
+  bindSound('harmonicGain',   'harmonicGain',   parseFloat1, fmt2);
+  bindSound('harmonicMult',   'harmonicMult',   parseFloat1, fmt2);
+  bindSound('noiseGain',      'noiseGain',      parseFloat1, fmt2);
+  bindSound('noiseLow',       'noiseLow',       parseInt1,   fmtInt);
+  bindSound('noiseHigh',      'noiseHigh',      parseInt1,   fmtInt);
+  bindSound('noiseQ',         'noiseQ',         parseFloat1, fmt2);
+  bindSound('turboEnable',    'turboEnable',    (s) => s === 'on', (v) => v ? 'ON' : 'OFF');
+  bindSound('turboGain',      'turboGain',      parseFloat1, fmt2);
+  bindSound('turboMult',      'turboMult',      parseInt1,   fmtInt);
+  bindSound('distDrive',      'distDrive',      parseFloat1, fmt2);
+  bindSound('reverbMix',      'reverbMix',      parseFloat1, fmt2);
+
+  // Helper function to bind sound parameters (stored in state.soundParams)
+  function bindSound(elementId, paramName, parseValue, formatDisplay) {
+    const element = document.getElementById(elementId);
+    const label = document.getElementById(elementId + 'Value');
+    if (!element) return;
+
+    // Initialize from state.soundParams
+    const initialValue = element.type === 'checkbox' ? element.checked : parseValue(element.value);
+    state.soundParams[paramName] = initialValue;
+    if (label) label.textContent = formatDisplay(initialValue);
+
+    // Bind to soundStateManager changes
+    element.addEventListener('input', () => {
+      const value = element.type === 'checkbox' ? element.checked : parseValue(element.value);
+      state.soundParams[paramName] = value;
+      if (label) label.textContent = formatDisplay(value);
+      // Persist to localStorage (will also trigger updates in sound.js via soundStateManager)
+      localStorage.setItem(`soundParam_${paramName}`, String(value));
+    });
+
+    // Listen for storage changes from other windows (cross-window sync)
+    window.addEventListener('storage', (event) => {
+      if (event.key === `soundParam_${paramName}`) {
+        const newValue = event.newValue === 'true' ? true : event.newValue === 'false' ? false : parseValue(event.newValue);
+        state.soundParams[paramName] = newValue;
+        if (element.type === 'checkbox') {
+          element.checked = newValue;
+        } else {
+          element.value = newValue;
+        }
+        if (label) label.textContent = formatDisplay(newValue);
+      }
+    });
+  }
+
   // ---- Engine toggle button ----
   const engineToggleButton = document.getElementById('engineToggle');
   if (engineToggleButton) {
@@ -270,7 +326,7 @@ export function updateInfoBar() {
   setInfoCell('headingDisplay',
     // Normalise to [0, 360): convert radians → degrees, mod 360, then add 360
     // and mod again so negative headings also wrap into [0, 360).
-    `${(((body.heading * 180 / Math.PI) % 360) + 360) % 360}°`);
+    `${((((body.heading * 180 / Math.PI) % 360) + 360) % 360).toFixed(0)}°`);
 
   setInfoCell('clutchDisplay',
     `${(engine.clutchEngagement * 100).toFixed(0)}%`);
