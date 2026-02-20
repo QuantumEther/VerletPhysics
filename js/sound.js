@@ -1,15 +1,20 @@
 // =============================================================
-// js/sound.js — Engine Sound Module (Phase 8)
+// js/sound.js — Engine Sound Module (Phase 8 + Phase 10 Fix)
 // =============================================================
 // Extracted from engine_sound.html and adapted as a pure ES6 module.
-// Zero DOM dependencies — all parameters live in soundParams object.
+// Zero DOM dependencies — all parameters live in state.soundParams.
 // Receives RPM and throttle via function arguments only.
+//
+// Phase 10 Fix: applyAllAudioParams() now reads from state.soundParams
+// instead of module-level soundParams to allow real-time slider updates.
 //
 // Exports:
 //   startEngine()                                — init AudioContext + node graph
 //   stopEngine()                                 — tear down graph, suspend context
 //   updateEngineSound(rpm, maxRpm, throttle)     — called every physics sub-step
 // =============================================================
+
+import state from './state.js';
 
 // =============================================================
 // MODULE-LEVEL AUDIO NODE VARIABLES
@@ -161,49 +166,49 @@ function applyAllAudioParams(rpm, maxRpm, throttlePosition) {
   const rampTo = now + SMOOTH_TIME;
 
   // ── Master volume ──────────────────────────────────────────
-  masterGain.gain.linearRampToValueAtTime(soundParams.masterVol, rampTo);
+  masterGain.gain.linearRampToValueAtTime(state.soundParams.masterVol, rampTo);
 
   // ── Main oscillator (sawtooth) ─────────────────────────────
   // Filter cutoff sweeps from mainFltLow at idle to mainFltHigh at redline.
-  const mainCutoff = soundParams.mainFltLow +
-    rpmNorm * (soundParams.mainFltHigh - soundParams.mainFltLow);
+  const mainCutoff = state.soundParams.mainFltLow +
+    rpmNorm * (state.soundParams.mainFltHigh - state.soundParams.mainFltLow);
 
   mainOsc.frequency.linearRampToValueAtTime(mainFreq, rampTo);
-  mainGainNode.gain.linearRampToValueAtTime(soundParams.mainGain, rampTo);
+  mainGainNode.gain.linearRampToValueAtTime(state.soundParams.mainGain, rampTo);
   mainLowpass.frequency.linearRampToValueAtTime(mainCutoff, rampTo);
-  mainLowpass.Q.linearRampToValueAtTime(soundParams.mainFltQ, rampTo);
+  mainLowpass.Q.linearRampToValueAtTime(state.soundParams.mainFltQ, rampTo);
 
   // ── Sub oscillator (sine) ──────────────────────────────────
-  subOsc.frequency.linearRampToValueAtTime(mainFreq * soundParams.subMult, rampTo);
-  subGainNode.gain.linearRampToValueAtTime(soundParams.subGain, rampTo);
+  subOsc.frequency.linearRampToValueAtTime(mainFreq * state.soundParams.subMult, rampTo);
+  subGainNode.gain.linearRampToValueAtTime(state.soundParams.subGain, rampTo);
 
   // ── Harmonic oscillator (triangle, 2.5× default) ──────────
-  const harmonicGain = soundParams.harmonicEnable ? soundParams.harmonicGain : 0;
-  harmonicOsc.frequency.linearRampToValueAtTime(mainFreq * soundParams.harmonicMult, rampTo);
+  const harmonicGain = state.soundParams.harmonicEnable ? state.soundParams.harmonicGain : 0;
+  harmonicOsc.frequency.linearRampToValueAtTime(mainFreq * state.soundParams.harmonicMult, rampTo);
   harmonicGainNode.gain.linearRampToValueAtTime(harmonicGain, rampTo);
 
   // ── Turbo oscillator (sine, 20× default) ──────────────────
-  const turboGain = soundParams.turboEnable ? soundParams.turboGain : 0;
-  turboOsc.frequency.linearRampToValueAtTime(mainFreq * soundParams.turboMult, rampTo);
+  const turboGain = state.soundParams.turboEnable ? state.soundParams.turboGain : 0;
+  turboOsc.frequency.linearRampToValueAtTime(mainFreq * state.soundParams.turboMult, rampTo);
   turboGainNode.gain.linearRampToValueAtTime(turboGain, rampTo);
 
   // ── Exhaust/intake noise (bandpass-filtered white noise) ───
   // Center frequency sweeps from noiseLow at idle to noiseHigh at redline.
   // Throttle position boosts noise gain slightly at high throttle (intake roar).
-  const noiseCenter = soundParams.noiseLow +
-    rpmNorm * (soundParams.noiseHigh - soundParams.noiseLow);
-  const noiseGainBoost = soundParams.noiseGain * (1 + throttlePosition * 0.3);
+  const noiseCenter = state.soundParams.noiseLow +
+    rpmNorm * (state.soundParams.noiseHigh - state.soundParams.noiseLow);
+  const noiseGainBoost = state.soundParams.noiseGain * (1 + throttlePosition * 0.3);
 
   noiseGainNode.gain.linearRampToValueAtTime(noiseGainBoost, rampTo);
   noiseBandpass.frequency.linearRampToValueAtTime(noiseCenter, rampTo);
-  noiseBandpass.Q.linearRampToValueAtTime(soundParams.noiseQ, rampTo);
+  noiseBandpass.Q.linearRampToValueAtTime(state.soundParams.noiseQ, rampTo);
 
   // ── Distortion drive ───────────────────────────────────────
-  setDistortionCurve(soundParams.distDrive);
+  setDistortionCurve(state.soundParams.distDrive);
 
   // ── Reverb mix ─────────────────────────────────────────────
-  dryGain.gain.linearRampToValueAtTime(1 - soundParams.reverbMix, rampTo);
-  wetGain.gain.linearRampToValueAtTime(soundParams.reverbMix, rampTo);
+  dryGain.gain.linearRampToValueAtTime(1 - state.soundParams.reverbMix, rampTo);
+  wetGain.gain.linearRampToValueAtTime(state.soundParams.reverbMix, rampTo);
 }
 
 // =============================================================
@@ -394,7 +399,7 @@ export function updateEngineSound(rpm, maxRpm, throttlePosition) {
 
   // Restore master gain if it was faded (engine restarted after stall).
   masterGain.gain.linearRampToValueAtTime(
-    soundParams.masterVol,
+    state.soundParams.masterVol,
     audioCtx.currentTime + SMOOTH_TIME
   );
 
@@ -413,7 +418,9 @@ export function updateEngineSound(rpm, maxRpm, throttlePosition) {
 export function setSoundParam(paramName, newValue) {
   if (!audioCtx) return; // Engine not running, nothing to update
 
+  // Update both module-level and state soundParams to keep them in sync
   soundParams[paramName] = newValue;
+  state.soundParams[paramName] = newValue;
 
   // Apply parameter-specific changes to audio nodes
   const now = audioCtx.currentTime;
